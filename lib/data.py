@@ -6,7 +6,6 @@ import os
 ##
 # Notes: csv file format: product_id, user_id, rating, timestamp
 ##
-# TODO: get rid of "unknown" users
 
 class Review:
 
@@ -31,9 +30,10 @@ class CSVDataProcessor:
                 rating = float(row[2])
                 timestamp = int(row[3])
                 
-                if user_id not in user_reviews:
-                    user_reviews[user_id] = []
-                user_reviews[user_id].append(Review(user_id, product_id, rating, timestamp))
+                if user_id != "unknown":
+                    if user_id not in user_reviews:
+                        user_reviews[user_id] = []
+                    user_reviews[user_id].append(Review(user_id, product_id, rating, timestamp))
 
         if threshold > 1:
             collapsed_reviews = []
@@ -85,9 +85,9 @@ class CSVDataProcessor:
         if write_to_file:
             path, filename = os.path.split(self.csv_file)
             if rand_sampling:
-                dump_path = os.path.join(path, "rand_" + os.path.splitext(filename)[0])
+                dump_path = os.path.join(path, os.path.splitext(filename)[0] + "_rand")
             else:
-                dump_path = os.path.join(path, "temp_" + os.path.splitext(filename)[0])
+                dump_path = os.path.join(path, os.path.splitext(filename)[0] + "_temp")
             # make directory of the name of the csv file
             if not os.path.exists(dump_path):
                 os.mkdir(dump_path)
