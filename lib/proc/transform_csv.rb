@@ -1,4 +1,5 @@
-#Trim the files and write datapoints in csv
+# Trim the files and write datapoints in csv
+
 datapoints = Array.new
 infile = File.new("Books.txt", "r")
 outfile = File.new("Books.csv", "w")
