@@ -48,5 +48,15 @@ def main():
 	print "\tMean Squared Error:", res[0]
 	print "\t% unaccounted", res[1]
 
+
+# Given timestamp, return exp level of user
+def find_exp_level(timestamp, user_id):
+	user_reviews = [] # should get list of user Review objects, sorted by time
+	exp_level = 0
+	for rev in user_reviews:
+		exp_level = rev.exp_level
+		if rev.timestamp > timestamp: return exp_level
+	return exp_level
+	
 if __name__ == "__main__":
   main()
