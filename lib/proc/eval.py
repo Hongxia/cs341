@@ -52,10 +52,10 @@ def main():
 # Given timestamp, return exp level of user
 def find_exp_level(timestamp, user_id):
 	user_reviews = [] # should get list of user Review objects, sorted by time
-	exp_level = 0
+	exp_level = 1
 	for rev in user_reviews:
-		exp_level = rev.exp_level
 		if rev.timestamp > timestamp: return exp_level
+		exp_level = rev.exp_level
 	return exp_level
 	
 if __name__ == "__main__":
