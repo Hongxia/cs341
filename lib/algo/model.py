@@ -17,7 +17,7 @@ class Params:
         self.num_betau = exp_level * num_users
         self.num_betai = exp_level * num_products
         self.num_gammau = exp_level * num_users * k_level
-        self.num_gammai = exp_level * num_users * k_level
+        self.num_gammai = exp_level * num_products * k_level
 
         if params_array is None:
             self.params_array = [float(0)] * (self.num_alpha + \
@@ -141,6 +141,9 @@ class ModelFitter:
         self.init_alphas = [float(alpha/(count+1)) for alpha, count in zip(alphas, alpha_counts)]
         self.params = Params(self.num_users, self.num_products, self.init_alphas)
 
+        print "num_user %d" % self.num_users
+        print "num_prod %d" % self.num_products
+
     @staticmethod
     def calculate_error(params, model, review):
         e = review.exp
@@ -153,28 +156,30 @@ class ModelFitter:
             rec += params.gammau(e, u, k) * params.gammai(e, p, k)
         return abs(rec - review.rating)
 
-    # @staticmethod
-    # def objective(params_array, *args):
-    #     #model = args[0]
-    #     #params = Params(model.num_users, model.num_products, params_array=params_array)
-    #     obj = float(0)
-    #     #for n_user_id in model.user_ratings_map:
-    #     #    for review in model.user_ratings_map[n_user_id]:
-    #     #        obj += ModelFitter.calculate_error(params, model, review)**2
-    #     return obj
+    @staticmethod
+    def objective(params_array, *args):
+        model = args[0]
+        params = Params(model.num_users, model.num_products, params_array=params_array)
+        obj = float(0)
+        for n_user_id in model.user_ratings_map:
+            for review in model.user_ratings_map[n_user_id]:
+                obj += ModelFitter.calculate_error(params, model, review)**2
+        return obj
 
     @staticmethod
     def convergence(xk):
         print "1"
 
     def fit_params(self):
-        # p, f, d = scipy.optimize.fmin_l_bfgs_b(objective1, x0=numpy.array(self.params.params_array), \
-        #     args=(0,0), approx_grad=True, maxiter=2, iprint=1, callback=ModelFitter.convergence)
-        p, f, d = scipy.optimize.fmin_l_bfgs_b(objective1, x0=numpy.array(init_params), \
-            args=(0,0), approx_grad=True, maxiter=2, iprint=1, callback=ModelFitter.convergence)
+        p, f, d = scipy.optimize.fmin_l_bfgs_b(ModelFitter.objective, \
+                                                x0=numpy.array(self.params.params_array), \
+                                                args=(self,), approx_grad=True, \
+                                                maxiter=2, iprint=1, callback=ModelFitter.convergence)
+        #p, f, d = scipy.optimize.fmin_l_bfgs_b(objective1, x0=numpy.array(init_params), \
+        #    args=(0,0), approx_grad=True, maxiter=2, iprint=1, callback=ModelFitter.convergence)
         return (p, f, d)
 
 
-init_params=[0]*200000
-def objective1(params, *args):
-    return float(0)
+#init_params=[0]*200000
+#def objective1(params, *args):
+#    return float(0)
