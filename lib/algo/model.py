@@ -1,75 +1,11 @@
 import csv
 import scipy
-import numpy
+from numpy import *
 import operator
 from scipy import optimize
 
 exp_level = 5
 k_level = 5
-
-class Params:
-    
-    def __init__(self, num_users, num_products, init_alphas=[0]*exp_level, params_array=None):
-        self.num_users = num_users
-        self.num_products = num_products
-
-        self.num_alpha = exp_level
-        self.num_betau = exp_level * num_users
-        self.num_betai = exp_level * num_products
-        self.num_gammau = exp_level * num_users * k_level
-        self.num_gammai = exp_level * num_products * k_level
-
-        if params_array is None:
-            self.params_array = [float(0)] * (self.num_alpha + \
-                self.num_betai + self.num_betau + \
-                self.num_gammai + self.num_gammau)
-
-            # init alphas
-            for e in range(0, exp_level):
-                self.set_alpha(e, init_alphas[e])
-
-        else:
-            self.params_array = params_array
-
-    # getters
-    def alpha(self, e):
-        return self.params_array[e]
-
-    def betau(self, e, u):
-        index = exp_level * u + e
-        return self.params_array[self.num_alpha + self.num_betai + index]
-      
-    def betai(self, e, i):
-        index = exp_level * i + e
-        return self.params_array[self.num_alpha + index]
-
-    def gammau(self, e, u, k):
-        index = (k_level + exp_level) * u + k_level * e + k
-        return self.params_array[self.num_alpha + self.num_betai + self.num_betau + self.num_gammai + index]
-
-    def gammai(self, e, i, k):
-        index = (k_level + exp_level) * i + k_level * e + k
-        return self.params_array[self.num_alpha + self.num_betai + self.num_betau + index]
-
-    # setters
-    def set_alpha(self, e, value):
-        self.params_array[e] = value
-
-    def set_betau(self, e, u, value):
-        index = exp_level * u + e
-        self.params_array[self.num_alpha + self.num_betai + index] = value
-
-    def set_betai(self, e, i, value):
-        index = exp_level * i + e
-        self.params_array[self.num_alpha + index] = value
-
-    def set_gammau(self, e, u, k, value):
-        index = (k_level + exp_level) * u + k_level * e + k
-        self.params_array[self.num_alpha + self.num_betai + self.num_betau + self.num_gammai + index] = value
-
-    def set_gammai(self, e, i, k, value):
-        index = (k_level + exp_level) * i + k_level * e + k
-        self.params_array[self.num_alpha + self.num_betai + self.num_betau + index] = value
 
 class Review:
     
@@ -80,6 +16,68 @@ class Review:
         self.rating = rating
         self.timestamp = timestamp
         self.exp = -1
+
+class ParamParser:
+
+    @staticmethod
+    def params_dimensions(num_users, num_products):
+        num_alpha = exp_level
+        num_betau = exp_level * num_users
+        num_betai = exp_level * num_products
+        num_gammau = exp_level * num_users * k_level
+        num_gammai = exp_level * num_products * k_level
+        return num_alpha, num_betau, num_betai, num_gammau, num_gammai
+    
+    def __init__(self, num_users, num_products, params):
+        self.params = params
+        self.num_users = num_users
+        self.num_products = num_products
+
+        self.num_alpha, self.num_betau, \
+        self.num_betai, self.num_gammau, \
+        self.num_gammai = ParamParser.params_dimensions(num_users, num_products)
+
+    # getters
+    def alpha(self, e):
+        return self.params[e]
+
+    def betau(self, e, u):
+        index = exp_level * u + e
+        return self.params[self.num_alpha + self.num_betai + index]
+
+    def betai(self, e, i):
+        index = exp_level * i + e
+        return self.params[self.num_alpha + index]
+
+    def gammau(self, e, u):
+        index = (k_level + exp_level) * u + k_level * e
+        index += self.num_alpha + self.num_betai + self.num_betau + self.num_gammai
+        return self.params[index:index+k_level]
+
+    def gammai(self, e, i):
+        index = (k_level + exp_level) * i + k_level * e
+        index += self.num_alpha + self.num_betai + self.num_betau
+        return self.params[index:index+k_level]
+
+    # setters
+    def set_alpha(self, e, value):
+        self.params[e] = value
+
+    def set_betau(self, e, u, value):
+        index = exp_level * u + e
+        self.params[self.num_alpha + self.num_betai + index] = value
+
+    def set_betai(self, e, i, value):
+        index = exp_level * i + e
+        self.params[self.num_alpha + index] = value
+
+    def set_gammau(self, e, u, k, value):
+        index = (k_level + exp_level) * u + k_level * e + k
+        self.params[self.num_alpha + self.num_betai + self.num_betau + self.num_gammai + index] = value
+
+    def set_gammai(self, e, i, k, value):
+        index = (k_level + exp_level) * i + k_level * e + k
+        self.params[self.num_alpha + self.num_betai + self.num_betau + index] = value
 
 class ModelFitter:
     
@@ -114,10 +112,10 @@ class ModelFitter:
 
                 if n_user_id not in self.user_ratings_map:
                     self.user_ratings_map[n_user_id] = []
-                self.user_ratings_map[n_user_id].append(Review(user_id, product_id, rating, timestamp))
+                self.user_ratings_map[n_user_id].append(Review(n_user_id, n_product_id, rating, timestamp))
 
-        alphas = [0] * exp_level
-        alpha_counts = [0] * exp_level
+        alphas = zeros(exp_level)
+        alpha_counts = zeros(exp_level)
         for n_user_id in self.user_ratings_map:
             # sort in time
             self.user_ratings_map[n_user_id].sort(key=operator.attrgetter("timestamp"))
@@ -137,49 +135,39 @@ class ModelFitter:
                 alphas[exp_level - 1] += self.user_ratings_map[n_user_id][count].rating
                 alpha_counts[exp_level - 1] += 1
 
-        # init_alphas
-        self.init_alphas = [float(alpha/(count+1)) for alpha, count in zip(alphas, alpha_counts)]
-        self.params = Params(self.num_users, self.num_products, self.init_alphas)
+        self.params = append(alphas/alpha_counts, \
+                zeros(sum(ParamParser.params_dimensions(self.num_users, self.num_products)) \
+                        - exp_level))
 
         print "num_user %d" % self.num_users
         print "num_prod %d" % self.num_products
 
+    # rewrite in Numpy
     @staticmethod
-    def calculate_error(params, model, review):
+    def calculate_error(pp, review):
         e = review.exp
-        u = model.user_mapping[review.user_id]
-        p = model.product_mapping[review.product_id]
+        u = review.user_id
+        p = review.product_id
 
-        rec = params.alpha(e)
-        rec += params.betau(e, u) + params.betai(e, p)
-        for k in range(0, k_level):
-            rec += params.gammau(e, u, k) * params.gammai(e, p, k)
+        rec = pp.alpha(e)
+        rec += pp.betau(e, u) + pp.betai(e, p)
+        rec += dot(pp.gammau(e, u), pp.gammai(e, p))
         return abs(rec - review.rating)
 
+    # rewrite in Numpy
     @staticmethod
-    def objective(params_array, *args):
-        model = args[0]
-        params = Params(model.num_users, model.num_products, params_array=params_array)
-        obj = float(0)
-        for n_user_id in model.user_ratings_map:
-            for review in model.user_ratings_map[n_user_id]:
-                obj += ModelFitter.calculate_error(params, model, review)**2
+    def objective(params, *args):
+        user_ratings_map, num_users, num_products = args
+        pp = ParamParser(num_users, num_products, params)
+        obj = 0
+        for n_user_id in user_ratings_map:
+            for review in user_ratings_map[n_user_id]:
+                obj += ModelFitter.calculate_error(pp, review)**2
         return obj
-
-    @staticmethod
-    def convergence(xk):
-        print "1"
 
     def fit_params(self):
         p, f, d = scipy.optimize.fmin_l_bfgs_b(ModelFitter.objective, \
-                                                x0=numpy.array(self.params.params_array), \
-                                                args=(self,), approx_grad=True, \
-                                                maxiter=2, iprint=1, callback=ModelFitter.convergence)
-        #p, f, d = scipy.optimize.fmin_l_bfgs_b(objective1, x0=numpy.array(init_params), \
-        #    args=(0,0), approx_grad=True, maxiter=2, iprint=1, callback=ModelFitter.convergence)
+                                                x0=self.params, \
+                                                args=(self.user_ratings_map, self.num_users, self.num_products), \
+                                                approx_grad=True, maxiter=6, iprint=1)
         return (p, f, d)
-
-
-#init_params=[0]*200000
-#def objective1(params, *args):
-#    return float(0)
