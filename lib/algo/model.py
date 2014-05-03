@@ -198,7 +198,8 @@ class ModelFitter:
                 gp.incr_gammau(e, u, k, 2 * error * pp.gammaik(e, p, k))
                 gp.incr_gammai(e, p, k, 2 * error * pp.gammauk(e, u, k))
             obj += error ** 2
-        pool.close
+        pool.close()
+        pool.join()
 
         return obj, gradients
 
