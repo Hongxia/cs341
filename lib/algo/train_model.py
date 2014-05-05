@@ -1,16 +1,20 @@
 #!/usr/bin/python
 
 import sys
-import time
 from model import ModelFitter
 
-if len(sys.argv) < 2:
-    print "usage: python train_model train.csv"
-    exit(1)
+if len(sys.argv) == 2:
+    CSV_FILE = sys.argv[1]
+else:
+    CSV_FILE = "../../data/toy1.csv"
 
-csv_file = sys.argv[1]
-model = ModelFitter(csv_file)
-pre_ts = time.time()
-p, f, d = model.fit_params()
-post_ts = time.time()
-print "L_BFGS_B Run-time: %f seconds" % (post_ts - pre_ts)
+DEBUG = True
+CORES = 2
+EM_ITERS = 10
+LBFGS_ITERS = 10
+
+model = ModelFitter(CSV_FILE, cores=CORES)
+
+for i in range(EM_ITERS):
+    model.update_params(max_iter=LBFGS_ITERS, DEBUG=DEBUG)
+    model.update_exps(DEBUG=DEBUG)

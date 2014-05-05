@@ -1,3 +1,4 @@
+import time
 import csv
 import scipy
 from numpy import *
@@ -15,20 +16,8 @@ def calculate_error(args):
     p = user_rating[0]
     rating = user_rating[2]
 
-    rec = pp.alpha(e)
-    rec += pp.betau(e, u) + pp.betai(e, p)
-    rec += dot(pp.gammau(e, u), pp.gammai(e, p))
+    rec = pp.alpha(e) + pp.betau(e, u) + pp.betai(e, p) + dot(pp.gammau(e, u), pp.gammai(e, p))
     return rec - rating, e, u, p
-
-class Review:
-    
-    # e = 0 ... exp_leve - 1
-    def __init__(self, user_id, product_id, rating, timestamp):
-        self.user_id = user_id
-        self.product_id = product_id
-        self.rating = rating
-        self.timestamp = timestamp
-        self.exp = -1
 
 class ParamParser:
 
@@ -102,12 +91,14 @@ class ParamParser:
 
 class ModelFitter:
     
-    def __init__(self, csv_file):
+    def __init__(self, csv_file, cores=1):
         self.csv_file = csv_file
+        self.cores = cores
         self._read()
 
     def _read(self):
-        self.user_ratings_map = {}
+        #self.user_ratings_map = {}
+        self.user_ratings = {}
         self.user_mapping = {}
         self.product_mapping = {}
 
@@ -118,105 +109,146 @@ class ModelFitter:
         with open(self.csv_file, "rb") as csv_file:
             csv_reader = csv.reader(csv_file, delimiter=",")
             for row in csv_reader:
-                product_id = row[0]
-                user_id = row[1]
+                product_id_str = row[0]
+                user_id_str = row[1]
                 rating = float32(row[2])
                 timestamp = int32(row[3])
 
                 self.num_reviews += 1
                 # normalized user id
-                if user_id not in self.user_mapping:
-                    self.user_mapping[user_id] = self.num_users
+                if user_id_str not in self.user_mapping:
+                    self.user_mapping[user_id_str] = self.num_users
                     self.num_users += 1
-                n_user_id = self.user_mapping[user_id]
+                user_id = self.user_mapping[user_id_str]
                 # normalized product id
-                if product_id not in self.product_mapping:
-                    self.product_mapping[product_id] = self.num_products
+                if product_id_str not in self.product_mapping:
+                    self.product_mapping[product_id_str] = self.num_products
                     self.num_products += 1
-                n_product_id = self.product_mapping[product_id]
+                product_id = self.product_mapping[product_id_str]
 
-                if n_user_id not in self.user_ratings_map:
-                    self.user_ratings_map[n_user_id] = []
-                self.user_ratings_map[n_user_id].append(Review(n_user_id, n_product_id, rating, timestamp))
-          
+                if user_id not in self.user_ratings:
+                    self.user_ratings[user_id] = empty((0, 5))
+                self.user_ratings[user_id] = append(self.user_ratings[user_id], [[product_id, user_id, rating, timestamp, -1]], axis=0)
+        
         alphas = zeros(exp_level, dtype=float32)
         alpha_counts = zeros(exp_level, dtype=float32)
-        for n_user_id in self.user_ratings_map:
-            # sort in time
-            self.user_ratings_map[n_user_id].sort(key=operator.attrgetter("timestamp"))
+        for user_id in self.user_ratings:
             # assign exp level at uniform distribution, round down except for the last level
-            num_user_ratings = len(self.user_ratings_map[n_user_id])
+            num_user_ratings = len(self.user_ratings[user_id])
             count = 0
             for e in range(0, exp_level):
                 for i in range(0, num_user_ratings/exp_level):
-                    self.user_ratings_map[n_user_id][count].exp = e
-                    alphas[e] += self.user_ratings_map[n_user_id][count].rating
+                    self.user_ratings[user_id][count][4] = e
+                    alphas[e] += self.user_ratings[user_id][count][2]
                     alpha_counts[e] += 1
                     count += 1
 
             # set remaining to max experience level
             for i in range(count, num_user_ratings):
-                self.user_ratings_map[n_user_id][count].exp = exp_level - 1
-                alphas[exp_level - 1] += self.user_ratings_map[n_user_id][count].rating
+                self.user_ratings[user_id][count][4] = exp_level - 1
+                alphas[exp_level - 1] += self.user_ratings[user_id][count][2]
                 alpha_counts[exp_level - 1] += 1
 
-        self.params = append(alphas/alpha_counts, \
-                zeros(sum(ParamParser.params_dimensions(self.num_users, self.num_products)) \
-                        - exp_level, dtype=float32))
+        # init params
+        self.params = append(alphas/alpha_counts, zeros(sum(ParamParser.params_dimensions(self.num_users, self.num_products)) - exp_level, dtype=float32))
         
-        # init vec
-        count = 0
-        self.user_ratings = empty([self.num_reviews, 5])
-        for n_user_id in self.user_ratings_map:
-            for review in self.user_ratings_map[n_user_id]:
-                self.user_ratings[count,:] = [review.product_id, review.user_id, review.rating, review.timestamp, review.exp]
-                count += 1
-
         print "num_user %d" % self.num_users
         print "num_prod %d" % self.num_products
         print "num_reviews %d" % self.num_reviews
 
     @staticmethod
     def objective(params, *args):
-        user_ratings, num_users, num_products = args
+        user_ratings, num_users, num_products, cores, calculate_gradient = args
+        user_ratings_array = concatenate([rating for user, rating in user_ratings.items()])
         pp = ParamParser(num_users, num_products, params)
 
         # objective
         obj = float32(0)
         # gradient
-        gradients = zeros(sum(ParamParser.params_dimensions(num_users, num_products)))
-        gp = ParamParser(num_users, num_products, gradients)
+        if calculate_gradient:
+            gradients = zeros(sum(ParamParser.params_dimensions(num_users, num_products)))
+            gp = ParamParser(num_users, num_products, gradients)
 
-        pool = Pool(2)
+        pool = Pool(cores)
         for result in pool.imap_unordered(calculate_error, \
-                                   [(pp, user_rating) for user_rating in user_ratings], \
+                                   [(pp, user_rating) for user_rating in user_ratings_array], \
                                    chunksize=8192):
             error, e, u, p = result
-            gp.incr_betau(e, u, 2 * error)
-            gp.incr_betai(e, p, 2 * error)
-            for k in range(k_level):
-                gp.incr_gammau(e, u, k, 2 * error * pp.gammaik(e, p, k))
-                gp.incr_gammai(e, p, k, 2 * error * pp.gammauk(e, u, k))
+            if calculate_gradient:
+                gp.incr_betau(e, u, 2 * error)
+                gp.incr_betai(e, p, 2 * error)
+                for k in range(k_level):
+                    gp.incr_gammau(e, u, k, 2 * error * pp.gammaik(e, p, k))
+                    gp.incr_gammai(e, p, k, 2 * error * pp.gammauk(e, u, k))
             obj += error ** 2
         pool.close()
         pool.join()
 
-        return obj, gradients
+        if calculate_gradient:
+            return obj, gradients
+        else:
+            return obj
+            
+    def update_params(self, max_iter=-1, DEBUG=False):
+        if DEBUG:
+            print "Updating Params (max_iter=%d) ..." % max_iter
+            pre_ts = time.time()
+        if max_iter > 0:
+            p, f, d = scipy.optimize.fmin_l_bfgs_b(ModelFitter.objective, x0=self.params, \
+                                                args=(self.user_ratings, self.num_users, self.num_products, self.cores, True), \
+                                                approx_grad=False, maxiter=max_iter, disp=DEBUG)
+        else:
+            p, f, d = scipy.optimize.fmin_l_bfgs_b(ModelFitter.objective, x0=self.params, \
+                                                args=(self.user_ratings, self.num_users, self.num_products, self.cores, True), \
+                                                approx_grad=False, disp=DEBUG)
+        self.params = array(p)
+        if DEBUG:
+            post_ts = time.time()
+            print "Params Updated (%d seconds). Func = %f" % (post_ts - pre_ts, f)
 
-        # user_ratings_map, num_users, num_products = args
-        # pp = ParamParser(num_users, num_products, params)
-        # obj = 0
-        # for n_user_id in user_ratings_map:
-        #     for review in user_ratings_map[n_user_id]:
-        #         obj += ModelFitter.calculate_error(pp, review)**2
-        # return obj
+    def update_exps(self, DEBUG=False):
+        if DEBUG:
+            print "Updating Experience Levels...",
+            pre_ts = time.time()
+        for user_id in self.user_ratings:
+            acc_cost_table = self._build_acc_cost_table(user_id)
+            self._update_exp(user_id, acc_cost_table)
+        if DEBUG:
+            post_ts = time.time()
+            obj = ModelFitter.objective(self.params, self.user_ratings, self.num_users, self.num_products, self.cores, False)
+            print "Experience Levels Updated (%d seconds). Func = %f" % (post_ts - pre_ts, obj)
 
-    @staticmethod
-    def fprime(params, *args):
-        return zeros(len(params))
+    def _build_acc_cost_table(self, user_id):
+        ratings = self.user_ratings[user_id]
+        pp = ParamParser(self.num_users, self.num_products, self.params)
+        cost_table = zeros((exp_level, len(ratings)))
+        for i, rating in enumerate(ratings):
+            for e in range(exp_level):
+                error, e, u, p = calculate_error((pp, rating))
+                cost_table[e][i] = abs(error)
+        
+        acc_cost_table = copy(cost_table)
+        for i in range(exp_level):
+            for j in range(1, len(ratings)):
+                if i == 0:
+                    acc_cost_table[i][j] = acc_cost_table[i][j-1] + cost_table[i][j]
+                else:
+                    acc_cost_table[i][j] = min(acc_cost_table[i][j-1], acc_cost_table[i-1][j-1]) + cost_table[i][j]
+        return acc_cost_table
 
-    def fit_params(self):
-        p, f, d = scipy.optimize.fmin_l_bfgs_b(ModelFitter.objective, x0=self.params, \
-                                                args=(self.user_ratings, self.num_users, self.num_products), \
-                                                approx_grad=False, iprint=1)
-        return (p, f, d)
+    def _update_exp(self, user_id, acc_cost_table):
+        ratings = self.user_ratings[user_id]
+        min_path = zeros(len(ratings))
+        min_cost, min_exp = min((cost, exp) for (exp, cost) in enumerate(acc_cost_table[:, len(ratings)-1]))
+        min_path[len(ratings)-1] = min_exp
+        
+        for rating_index in range(len(ratings)-2, 0, -1):
+            next_exp = min_path[rating_index+1]
+            if next_exp == 0:
+                min_path[rating_index] = next_exp
+            else:
+                min_cost, min_exp = min((cost, exp) for (exp, cost) in enumerate(acc_cost_table[next_exp-1:next_exp+1, rating_index]))
+                min_path[rating_index] = min_exp
+
+        for i, exp in enumerate(min_path):
+            ratings[i][4] = exp
