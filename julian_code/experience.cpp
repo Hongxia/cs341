@@ -697,9 +697,9 @@ void experiment(char* c, int mode, int evaluation, int E, int K)
   corpus corp(c, 0);
   
   // First train a standard recommender system
-  expCorpus ec1(&corp, 1, K, 0, 0, RECOMMENDER, evaluation);
+  expCorpus ec1(&corp, 1, 10, lambda1, 0, RECOMMENDER, evaluation);
   printf("Training latent-factor recommender system...\n");
-  ec1.train(1, 50);
+  ec1.train(1, 100);
 
   if (mode != RECOMMENDER)
   {
@@ -721,8 +721,9 @@ int main(int argc, char** argv)
     exit(0);
   }
 
+  //int mode = LEARNED_USER_EVOLUTION; // Mode (lf/a/b/c/d from the WWW paper, see common.hpp)
   int mode = LEARNED_USER_EVOLUTION; // Mode (lf/a/b/c/d from the WWW paper, see common.hpp)
-  int testMode = RANDOMVOTE; // Testing setting (Table 2/3 from the WWW paper, see common.hpp)
+  int testMode = FINALVOTE; // Testing setting (Table 2/3 from the WWW paper, see common.hpp)
 
   experiment(argv[1], mode, testMode, 5, 5);
 }

@@ -72,7 +72,7 @@ public:
     char* bName = new char [100];
     int ind = 0;
     // Files should be lines containing quadruples of (user, item, rating, time)
-    while (fscanf(f, "%s %s %f %ld", uName, bName, &(v->value), &(v->voteTime)) == 4)
+    while (fscanf(f, "%s %s %f %ld", bName, uName, &(v->value), &(v->voteTime)) == 4)
     {
       std::string uS(uName);
       std::string bS(bName);
