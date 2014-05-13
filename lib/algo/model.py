@@ -196,11 +196,11 @@ class ModelFitter:
         if max_iter > 0:
             p, f, d = scipy.optimize.fmin_l_bfgs_b(ModelFitter.objective, x0=self.params, \
                                                 args=(self.user_ratings, self.num_users, self.num_products, self.cores, True), \
-                                                approx_grad=False, maxiter=max_iter, disp=DEBUG)
+                                                approx_grad=False, maxiter=max_iter, disp=0) # TODO: change 0 to DEBUG
         else:
             p, f, d = scipy.optimize.fmin_l_bfgs_b(ModelFitter.objective, x0=self.params, \
                                                 args=(self.user_ratings, self.num_users, self.num_products, self.cores, True), \
-                                                approx_grad=False, disp=DEBUG)
+                                                approx_grad=False, disp=0) # TODO: change 0 to debug
         self.params = array(p)
         if DEBUG:
             post_ts = time.time()

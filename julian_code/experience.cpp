@@ -693,13 +693,13 @@ void experiment(char* c, int mode, int evaluation, int E, int K)
 {
   // All hyperparameters set to 1.
   int lambda1 = 1;
-  int lambda2 = 1;
+  int lambda2 = 10;
   corpus corp(c, 0);
   
   // First train a standard recommender system
-  expCorpus ec1(&corp, 1, 10, lambda1, 0, RECOMMENDER, evaluation);
+  expCorpus ec1(&corp, 1, K, lambda1, 0, RECOMMENDER, evaluation);
   printf("Training latent-factor recommender system...\n");
-  ec1.train(1, 100);
+  ec1.train(1, 50);
 
   if (mode != RECOMMENDER)
   {
