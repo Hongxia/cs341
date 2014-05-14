@@ -164,6 +164,7 @@ class ModelFitter:
 
         # objective
         obj = float32(0)
+        reg = float32(0)
         # gradient
         if calculate_gradient:
             gradients = zeros(sum(ParamParser.params_dimensions(num_users, num_products)))
@@ -183,6 +184,13 @@ class ModelFitter:
             obj += error ** 2
         pool.close()
         pool.join()
+ 
+        num_alpha_betas = pp.num_alpha + pp.num_betai + pp.num_betau
+        for e in range(exp_level-1):
+            reg += linalg.norm(params[e:num_alpha_betas:exp_level] - params[e+1:num_alpha_betas:exp_level], ord=None)**2
+            for k in range(k_level):
+              reg += linalg.norm(params[num_alpha_betas+e*k+k::exp_level*k_level] - params[num_alpha_betas+(e+1)*k+k::exp_level*k_level])**2 
+        obj += reg
 
         if calculate_gradient:
             return obj, gradients
