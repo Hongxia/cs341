@@ -145,8 +145,8 @@ class ModelFitter:
 
             # set remaining to max experience level
             for i in range(count, num_user_ratings):
-                self.user_ratings[user_id][count][4] = exp_level - 1
-                alphas[exp_level - 1] += self.user_ratings[user_id][count][2]
+                self.user_ratings[user_id][i][4] = exp_level - 1
+                alphas[exp_level - 1] += self.user_ratings[user_id][i][2]
                 alpha_counts[exp_level - 1] += 1
 
         # init params
@@ -225,6 +225,7 @@ class ModelFitter:
         for i, rating in enumerate(ratings):
             for e in range(exp_level):
                 dup_rating = copy(rating)
+                dup_rating[4] = e
                 error, e, u, p = calculate_error((pp, dup_rating))
                 cost_table[e][i] = abs(error)
         
