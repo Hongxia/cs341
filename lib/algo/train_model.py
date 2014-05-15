@@ -14,7 +14,9 @@ CORES = 2
 EM_ITERS = 40
 LBFGS_ITERS = 10
 
-model = ModelFitter(CSV_FILE, cores=CORES)
+LAMBDA = 1
+
+model = ModelFitter(LAMBDA, CSV_FILE, cores=CORES)
 
 for i in range(EM_ITERS):
     print "EM_ITERATION_# %d" % (i+1)

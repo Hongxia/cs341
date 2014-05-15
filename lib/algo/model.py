@@ -91,10 +91,11 @@ class ParamParser:
 
 class ModelFitter:
     
-    def __init__(self, csv_file, cores=1):
+    def __init__(self, reg_param, csv_file, cores=1):
         self.csv_file = csv_file
         self.cores = cores
         self._read()
+        self.reg_param = reg_param
 
     def _read(self):
         #self.user_ratings_map = {}
@@ -158,7 +159,7 @@ class ModelFitter:
 
     @staticmethod
     def objective(params, *args):
-        user_ratings, num_users, num_products, cores, calculate_gradient = args
+        user_ratings, num_users, num_products, num_reviews, reg_param, cores, calculate_gradient = args
         user_ratings_array = concatenate([rating for user, rating in user_ratings.items()])
         pp = ParamParser(num_users, num_products, params)
 
@@ -185,13 +186,44 @@ class ModelFitter:
         pool.close()
         pool.join()
  
+        obj /= num_reviews
         num_alpha_betas = pp.num_alpha + pp.num_betai + pp.num_betau
         for e in range(exp_level-1):
             reg += linalg.norm(params[e:num_alpha_betas:exp_level] - params[e+1:num_alpha_betas:exp_level], ord=None)**2
             for k in range(k_level):
-              reg += linalg.norm(params[num_alpha_betas+e*k+k::exp_level*k_level] - params[num_alpha_betas+(e+1)*k+k::exp_level*k_level])**2 
-        obj += reg
+              reg += linalg.norm(params[num_alpha_betas+e*k_level+k::exp_level*k_level] - params[num_alpha_betas+(e+1)*k_level+k::exp_level*k_level])**2 
+        obj += (reg_param * reg)
 
+        if calculate_gradient:
+            gradients /= num_reviews
+            # e = 0
+            gradients[0:num_alpha_betas:exp_level] += \
+              (2*params[0:num_alpha_betas:exp_level] - \
+               2*params[1:num_alpha_betas:exp_level]) * reg_param
+            for k in range(k_level):
+                gradients[num_alpha_betas+k::exp_level*k_level] += \
+                  (2*params[num_alpha_betas+k::exp_level*k_level] - \
+                   2*params[num_alpha_betas+k_level+k::exp_level*k_level]) * reg_param
+            # e = 1,2,3
+            for e in range(1, exp_level-1):
+                gradients[e:num_alpha_betas:exp_level] += \
+                  (4*params[e:num_alpha_betas:exp_level] - \
+                   2*params[e-1:num_alpha_betas:exp_level] - \
+                   2*params[e+1:num_alpha_betas:exp_level]) * reg_param
+                for k in range(k_level):
+                    gradients[num_alpha_betas+e*k_level+k::exp_level*k_level] += \
+                      (4*params[num_alpha_betas+e*k_level+k::exp_level*k_level] - \
+                       2*params[num_alpha_betas+(e-1)*k_level+k::exp_level*k_level] - \
+                       2*params[num_alpha_betas+(e+1)*k_level+k::exp_level*k_level]) * reg_param
+            # e = 4
+            gradients[4:num_alpha_betas:exp_level] += \
+              (2*params[4:num_alpha_betas:exp_level] - \
+               2*params[3:num_alpha_betas:exp_level]) * reg_param
+            for k in range(k_level):
+                gradients[num_alpha_betas+4*k_level+k::exp_level*k_level] += \
+                  (2*params[num_alpha_betas+4*k_level+k::exp_level*k_level] - \
+                   2*params[num_alpha_betas+3*k_level+k::exp_level*k_level]) * reg_param
+ 
         if calculate_gradient:
             return obj, gradients
         else:
@@ -203,11 +235,13 @@ class ModelFitter:
             pre_ts = time.time()
         if max_iter > 0:
             p, f, d = scipy.optimize.fmin_l_bfgs_b(ModelFitter.objective, x0=self.params, \
-                                                args=(self.user_ratings, self.num_users, self.num_products, self.cores, True), \
+                                                args=(self.user_ratings, self.num_users, self.num_products, self.num_reviews, \
+                                                      self.reg_param, self.cores, True), \
                                                 approx_grad=False, maxiter=max_iter, disp=0) # TODO: change 0 to DEBUG
         else:
             p, f, d = scipy.optimize.fmin_l_bfgs_b(ModelFitter.objective, x0=self.params, \
-                                                args=(self.user_ratings, self.num_users, self.num_products, self.cores, True), \
+                                                args=(self.user_ratings, self.num_users, self.num_products, self.num_reviews, \
+                                                      self.reg_param, self.cores, True), \
                                                 approx_grad=False, disp=0) # TODO: change 0 to debug
         self.params = array(p)
         if DEBUG:
@@ -223,7 +257,7 @@ class ModelFitter:
             self._update_exp(user_id, acc_cost_table)
         if DEBUG:
             post_ts = time.time()
-            obj = ModelFitter.objective(self.params, self.user_ratings, self.num_users, self.num_products, self.cores, False)
+            obj = ModelFitter.objective(self.params, self.user_ratings, self.num_users, self.num_products, self.num_reviews, self.reg_param, self.cores, False)
             print "Experience Levels Updated (%d seconds). Func = %f" % (post_ts - pre_ts, obj)
 
     def _build_acc_cost_table(self, user_id):
