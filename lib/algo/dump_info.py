@@ -48,10 +48,19 @@ def read_output(output):
 					user_exp_level[user_id] = empty((0, 2))
 	return user_exp_level, params
 
+# Assume reviews are ordered by time in user_exp_level
+def get_exp_level(user_id, timestamp, user_exp_level):
+	reviews = user_exp_level[user_id]
+	old_exp_level = reviews[0][1]
+	for review in reviews:
+		if review[0] > timestamp: return old_exp_level
+		old_exp_level = review[1]
+	return reviews[len(reviews) - 1][1]
+
 if __name__ == "__main__":
 	# numpy 2d array
-  user_reviews = {4: array([[1, 2, 3, 5234234, 3], [5, 6, 7, 234234432, 1], [10, 20, 30, 4023232, 5]]), 
-		9: array([[11, 21, 31, 512342, 4], [5, 6, 7, 912343214, 2], [19, 21, 21, 23234232, 4]])}
+  user_reviews = {4: array([[1, 2, 3, 100, 3], [5, 6, 7, 150, 4], [10, 20, 30, 300, 5]]), 
+		9: array([[11, 21, 31, 100, 1], [5, 6, 7, 150, 1], [19, 21, 21, 300, 1]])}
 	# print user_reviews
   params = array([4, 5, 9])
 	# print params
@@ -65,4 +74,15 @@ if __name__ == "__main__":
   user_exp_level, param = read_output(output)
   print user_exp_level
   print param
+
+  print "DONE"
+  print get_exp_level(4, 50, user_exp_level)
+  print get_exp_level(4, 148, user_exp_level)
+  print get_exp_level(4, 200, user_exp_level)
+  print get_exp_level(4, 250, user_exp_level)
+  print get_exp_level(4, 350, user_exp_level)
+
+  print get_exp_level(9, 80, user_exp_level)
+  print get_exp_level(9, 100, user_exp_level)
+
 
