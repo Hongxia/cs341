@@ -1,13 +1,14 @@
 #!/usr/bin/python
 
+import os
 import sys
 from model import ModelFitter
 
-if len(sys.argv) == 4:
-    CSV_FILE = sys.argv[1]
-else:
-    CSV_FILE = "../../data/Movies_training.csv"
+if len(sys.argv) != 2:
+    print "Usage: python train_model.py csv_file_name_in_data_dir"
+    exit(1)
 
+CSV_FILE = os.path.join("../../data/", sys.argv[1])
 DEBUG = True
 CORES = 2
 EM_ITERS = 40

@@ -145,8 +145,8 @@ class ModelFitter:
 
             # set remaining to max experience level
             for i in range(count, num_user_ratings):
-                self.user_ratings[user_id][count][4] = exp_level - 1
-                alphas[exp_level - 1] += self.user_ratings[user_id][count][2]
+                self.user_ratings[user_id][i][4] = exp_level - 1
+                alphas[exp_level - 1] += self.user_ratings[user_id][i][2]
                 alpha_counts[exp_level - 1] += 1
 
         # init params
@@ -224,7 +224,9 @@ class ModelFitter:
         cost_table = zeros((exp_level, len(ratings)))
         for i, rating in enumerate(ratings):
             for e in range(exp_level):
-                error, e, u, p = calculate_error((pp, rating))
+                dup_rating = copy(rating)
+                dup_rating[4] = e
+                error, e, u, p = calculate_error((pp, dup_rating))
                 cost_table[e][i] = abs(error)
         
         acc_cost_table = copy(cost_table)
@@ -242,13 +244,13 @@ class ModelFitter:
         min_cost, min_exp = min((cost, exp) for (exp, cost) in enumerate(acc_cost_table[:, len(ratings)-1]))
         min_path[len(ratings)-1] = min_exp
         
-        for rating_index in range(len(ratings)-2, 0, -1):
+        for rating_index in range(len(ratings)-2, -1, -1):
             next_exp = min_path[rating_index+1]
             if next_exp == 0:
                 min_path[rating_index] = next_exp
             else:
                 min_cost, min_exp = min((cost, exp) for (exp, cost) in enumerate(acc_cost_table[next_exp-1:next_exp+1, rating_index]))
-                min_path[rating_index] = min_exp
+                min_path[rating_index] = next_exp - 1 + min_exp
 
         for i, exp in enumerate(min_path):
             ratings[i][4] = exp
