@@ -13,7 +13,7 @@ DEBUG = True
 CORES = 2
 EM_ITERS = 40
 LBFGS_ITERS = 10
-
+# MIN_EM_ITERS = 5
 LAMBDA = 1
 
 model = ModelFitter(LAMBDA, CSV_FILE, cores=CORES)
