@@ -13,16 +13,26 @@ def dump_exp_level(user_reviews, output):
 		output.write(str(user_id) + "\n")
 		old_exp_level = -1
 		count = 0
+		prev_review = None
 		for review in reviews:
-			count += 1
-			start_time = review[3]
-			if review[4] != old_exp_level or old_exp_level == -1:
+			if old_exp_level == -1: 
+				start_time = review[3]
+				old_exp_level = review[4]
+			
+			if review[4] != old_exp_level:
 				output.write(str(start_time) + ",") # start_time
-				output.write(str(review[3]) + ",") # end_time
-				output.write(str(review[4]) + ",") # exp level
+				output.write(str(prev_review[3]) + ",") # end_time
+				output.write(str(old_exp_level) + ",") # exp level
 				output.write(str(count) + "\n") # num_reivews
 				count = 0
 				old_exp_level = review[4]
+				start_time = review[3]
+			count += 1
+			prev_review = review
+		output.write(str(start_time) + ",") # start_time
+		output.write(str(review[3]) + ",") # end_time
+		output.write(str(review[4]) + ",") # exp level
+		output.write(str(count) + "\n") # num_reivews
 
 def dump_params(params, output):
 	print "Dumping model params"
@@ -61,11 +71,14 @@ def read_output(output):
 # Assume reviews are ordered by time in user_exp_level
 def get_exp_level(user_id, timestamp, user_exp_level):
 	reviews = user_exp_level[user_id]
-	old_exp_level = reviews[0][1]
+	# print reviews
+	old_exp_level = reviews[0][2]
 	for review in reviews:
-		if review[0] > timestamp: return old_exp_level
-		old_exp_level = review[1]
-	return reviews[len(reviews) - 1][1]
+		# print "old_exp_level", old_exp_level
+		if review[1] > timestamp: return old_exp_level
+		old_exp_level = review[2]
+	# print "got to end"
+	return reviews[len(reviews) - 1][2]
 
 if __name__ == "__main__":
 	# numpy 2d array
@@ -91,7 +104,7 @@ if __name__ == "__main__":
   print get_exp_level(4, 200, user_exp_level)
   print get_exp_level(4, 250, user_exp_level)
   print get_exp_level(4, 350, user_exp_level)
-
+  print
   print get_exp_level(9, 80, user_exp_level)
   print get_exp_level(9, 100, user_exp_level)
 
