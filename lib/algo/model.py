@@ -91,14 +91,95 @@ class ParamParser:
 
 class ModelFitter:
     
-    def __init__(self, reg_param, csv_file, cores=1):
-        self.csv_file = csv_file
+    def __init__(self, reg_param, training_csv_file, validation_csv_file, cores=1):
+        self.training_csv_file = training_csv_file
+        self.validation_csv_file = validation_csv_file
         self.cores = cores
-        self._read()
         self.reg_param = reg_param
+        self._read_training_data()
+        self._read_validation_data()
+        
+    '''
+    Public Interface
+    '''           
+    def update_params(self, max_iter=-1):
+        pre_ts = time.time()
+        if max_iter > 0:
+            p, f, d = scipy.optimize.fmin_l_bfgs_b(ModelFitter.objective, x0=self.params, \
+                                                args=(self.user_ratings, self.num_users, self.num_products, self.num_reviews, \
+                                                      self.reg_param, self.cores, True), \
+                                                approx_grad=False, maxiter=max_iter, disp=0)
+        else:
+            p, f, d = scipy.optimize.fmin_l_bfgs_b(ModelFitter.objective, x0=self.params, \
+                                                args=(self.user_ratings, self.num_users, self.num_products, self.num_reviews, \
+                                                      self.reg_param, self.cores, True), \
+                                                approx_grad=False, disp=0)
+        self.params = array(p)
+        post_ts = time.time()
 
-    def _read(self):
-        #self.user_ratings_map = {}
+        return f, post_ts - pre_ts
+
+    def update_exps(self):
+        pre_ts = time.time()
+        for user_id in self.user_ratings:
+            acc_cost_table = self._build_acc_cost_table(user_id)
+            self._update_exp(user_id, acc_cost_table)
+        obj = ModelFitter.objective(self.params, self.user_ratings, self.num_users, self.num_products, self.cores, False)
+        post_ts = time.time()
+        return obj, post_ts - pre_ts
+
+     def validate_model(self):
+        pre_ts = time.time()
+        val_error = float32(0)
+        pp = ParamParser(self.num_users, self.num_products, self.params)
+        user_exp_levels = ModelFitter.summarize_user_exp_levels(self.user_ratings)
+        for user_id in self.val_user_ratings:
+            for rating in self.val_user_ratings[user_id]:
+                timestamp = rating[3]
+                rating[4] = ModelFitter.get_exp_level(user_id, timestamp, user_exp_levels)
+        
+        pool = Pool(cores)
+        for result in pool.imap_unordered(calculate_error, \
+                                   [(pp, user_rating) for user_rating in user_ratings_array], \
+                                   chunksize=8192):
+            error, e, u, p = result
+            val_error += error ** 2
+        pool.close()
+        pool.join()
+        post_ts = time.time()
+        return val_error, post_ts - pre_ts
+
+    def train(self, min_em_iters, lbfgs_iters):
+        print "training model (minimal %d em_iters, %d lbfgs_iters) ...", % (min_em_iters, lbfgs_iters)
+        validation_errors = []
+        iter_count = 0
+        while True:
+            iter_count += 1
+            print "iter #%d: " % iter_count,
+            pf, ptime = self.update_params(max_iter=lbfgs_iters)
+            print "update params in %d sec, training set error = %f", % (ptime, pf)
+            print " >> ",
+            ef, etime = self.update_exps()
+            print "update exps in %d sec, training set error = %f", % (etime, ef)
+            print " >> ",
+            vf, vtime = self.validate_model()
+            print "validate model in %d sec, validation set error = %f" % (vtime, vf)
+            
+            validation_errors.append(vf)
+            if iter_count > min_em_iters and validation_errors[-1] > validation_errors[-2]:
+                break
+
+        print "SUMMARY:"
+        print "Training completed in %d iterations" % iter_count
+        print "Validation errors are %s" % validation_errors.join(" ")
+
+    '''
+    Private Helpers
+    '''
+
+    # parsing helpers
+    def _read_training_data(self):
+        print "Reading training data...",
         self.user_ratings = {}
         self.user_mapping = {}
         self.product_mapping = {}
@@ -107,8 +188,8 @@ class ModelFitter:
         self.num_products = int32(0)
         self.num_reviews = int32(0)
 
-        with open(self.csv_file, "rb") as csv_file:
-            csv_reader = csv.reader(csv_file, delimiter=",")
+        with open(self.training_csv_file, "rb") as training_csv_file:
+            csv_reader = csv.reader(training_csv_file, delimiter=",")
             for row in csv_reader:
                 product_id_str = row[0]
                 user_id_str = row[1]
@@ -152,10 +233,68 @@ class ModelFitter:
 
         # init params
         self.params = append(alphas/alpha_counts, zeros(sum(ParamParser.params_dimensions(self.num_users, self.num_products)) - exp_level, dtype=float32))
+        print "%d reviews from %d users on %d products" % (self.num_reviews, self.num_users, self.num_products)
+
+    def _read_validation_data(self):
+        print "Reading validation data...",
+        self.val_user_ratings = {}
+        self.val_num_reviews = int32(0)
+
+        with open(self.validation_csv_file, "rb") as validation_csv_file:
+            csv_reader = csv.reader(validation_csv_file, delimiter=",")
+            for row in csv_reader:
+                product_id_str = row[0]
+                user_id_str = row[1]
+                rating = float32(row[2])
+                timestamp = int32(row[3])
+
+                self.val_num_reviews += 1
+                user_id = self.user_mapping[user_id_str]
+                product_id = self.product_mapping[product_id_str]
+
+                if user_id not in self.val_user_ratings:
+                    self.val_user_ratings[user_id] = empty((0, 5))
+                self.val_user_ratings[user_id] = append(self.val_user_ratings[user_id], [[product_id, user_id, rating, timestamp, -1]], axis=0)
+
+        print "%d reviews" % self.val_num_reviews
+
+    # training helpers
+    def _build_acc_cost_table(self, user_id):
+        ratings = self.user_ratings[user_id]
+        pp = ParamParser(self.num_users, self.num_products, self.params)
+        cost_table = zeros((exp_level, len(ratings)))
+        for i, rating in enumerate(ratings):
+            for e in range(exp_level):
+                dup_rating = copy(rating)
+                dup_rating[4] = e
+                error, e, u, p = calculate_error((pp, dup_rating))
+                cost_table[e][i] = abs(error)
         
-        print "num_user %d" % self.num_users
-        print "num_prod %d" % self.num_products
-        print "num_reviews %d" % self.num_reviews
+        acc_cost_table = copy(cost_table)
+        for i in range(exp_level):
+            for j in range(1, len(ratings)):
+                if i == 0:
+                    acc_cost_table[i][j] = acc_cost_table[i][j-1] + cost_table[i][j]
+                else:
+                    acc_cost_table[i][j] = min(acc_cost_table[i][j-1], acc_cost_table[i-1][j-1]) + cost_table[i][j]
+        return acc_cost_table
+
+    def _update_exp(self, user_id, acc_cost_table):
+        ratings = self.user_ratings[user_id]
+        min_path = zeros(len(ratings))
+        min_cost, min_exp = min((cost, exp) for (exp, cost) in enumerate(acc_cost_table[:, len(ratings)-1]))
+        min_path[len(ratings)-1] = min_exp
+        
+        for rating_index in range(len(ratings)-2, -1, -1):
+            next_exp = min_path[rating_index+1]
+            if next_exp == 0:
+                min_path[rating_index] = next_exp
+            else:
+                min_cost, min_exp = min((cost, exp) for (exp, cost) in enumerate(acc_cost_table[next_exp-1:next_exp+1, rating_index]))
+                min_path[rating_index] = next_exp - 1 + min_exp
+
+        for i, exp in enumerate(min_path):
+            ratings[i][4] = exp
 
     @staticmethod
     def objective(params, *args):
@@ -228,79 +367,41 @@ class ModelFitter:
             return obj, gradients
         else:
             return obj
-            
-    def update_params(self, max_iter=-1, DEBUG=False):
-        if DEBUG:
-            print "Updating Params (max_iter=%d) ..." % max_iter
-            pre_ts = time.time()
-        if max_iter > 0:
-            p, f, d = scipy.optimize.fmin_l_bfgs_b(ModelFitter.objective, x0=self.params, \
-                                                args=(self.user_ratings, self.num_users, self.num_products, self.num_reviews, \
-                                                      self.reg_param, self.cores, True), \
-                                                approx_grad=False, maxiter=max_iter, disp=0) # TODO: change 0 to DEBUG
-        else:
-            p, f, d = scipy.optimize.fmin_l_bfgs_b(ModelFitter.objective, x0=self.params, \
-                                                args=(self.user_ratings, self.num_users, self.num_products, self.num_reviews, \
-                                                      self.reg_param, self.cores, True), \
-                                                approx_grad=False, disp=0) # TODO: change 0 to debug
-        self.params = array(p)
-        if DEBUG:
-            post_ts = time.time()
-            print "Params Updated (%d seconds). Func = %f" % (post_ts - pre_ts, f)
 
-    def update_exps(self, DEBUG=False):
-        if DEBUG:
-            print "Updating Experience Levels...",
-            pre_ts = time.time()
-        for user_id in self.user_ratings:
-            acc_cost_table = self._build_acc_cost_table(user_id)
-            self._update_exp(user_id, acc_cost_table)
-        if DEBUG:
-            post_ts = time.time()
-            obj = ModelFitter.objective(self.params, self.user_ratings, self.num_users, self.num_products, self.num_reviews, self.reg_param, self.cores, False)
-            print "Experience Levels Updated (%d seconds). Func = %f" % (post_ts - pre_ts, obj)
+    # validation helpers
+    # TODO: test
+    @staticmethod
+    def get_exp_level(user_id, timestamp, user_exp_levels):
+        prev_exp = 0
+        for review in user_exp_levels[user_id]:
+            start_timestamp = review[0]
+            end_timestamp = review[1]
+            curr_exp = review[2]
+            if start_timestamp > timestamp:
+                return prev_exp
+            else if end_timestamp > timestamp:
+                return curr_exp
+        return curr_exp
 
-    def _build_acc_cost_table(self, user_id):
-        ratings = self.user_ratings[user_id]
-        pp = ParamParser(self.num_users, self.num_products, self.params)
-        cost_table = zeros((exp_level, len(ratings)))
-        for i, rating in enumerate(ratings):
-            for e in range(exp_level):
-                dup_rating = copy(rating)
-                dup_rating[4] = e
-                error, e, u, p = calculate_error((pp, dup_rating))
-                cost_table[e][i] = abs(error)
-        
-        acc_cost_table = copy(cost_table)
-        for i in range(exp_level):
-            for j in range(1, len(ratings)):
-                if i == 0:
-                    acc_cost_table[i][j] = acc_cost_table[i][j-1] + cost_table[i][j]
-                else:
-                    acc_cost_table[i][j] = min(acc_cost_table[i][j-1], acc_cost_table[i-1][j-1]) + cost_table[i][j]
-        return acc_cost_table
+    # TODO: test
+    @staticmethod
+    def summarize_user_exp_levels(user_ratings):
+        user_exp_levels = {}
+        for user_id in user_ratings:
+            if user_id not in user_exp_levels:
+                first_exp = user_ratings[user_id][0][4]
+                first_timestamp = user_ratings[user_id][0][3]
+                user_exp_levels[user_id] = array([[first_timestamp, 0, first_exp, 0]])
 
-    def _update_exp(self, user_id, acc_cost_table):
-        ratings = self.user_ratings[user_id]
-        min_path = zeros(len(ratings))
-        min_cost, min_exp = min((cost, exp) for (exp, cost) in enumerate(acc_cost_table[:, len(ratings)-1]))
-        min_path[len(ratings)-1] = min_exp
-        
-        for rating_index in range(len(ratings)-2, -1, -1):
-            next_exp = min_path[rating_index+1]
-            if next_exp == 0:
-                min_path[rating_index] = next_exp
-            else:
-                min_cost, min_exp = min((cost, exp) for (exp, cost) in enumerate(acc_cost_table[next_exp-1:next_exp+1, rating_index]))
-                min_path[rating_index] = next_exp - 1 + min_exp
+            prev_exp = first_exp
+            for review in user_ratings[user_id]:
+                curr_exp = review[4]
+                curr_timestamp = review[3]
+                if curr_exp == prev_exp:
+                    user_exp_levels[user_id][-1][1] = curr_timestamp
+                    user_exp_levels[user_id][-1][3] += 1
+                if curr_exp > prev_exp:
+                    user_exp_levels[user_id] = append(user_exp_levels[uesr_id], [[curr_timestamp, curr_timestamp, curr_exp, 1]], axis=0)
+                prev_exp = curr_exp
 
-        for i, exp in enumerate(min_path):
-            ratings[i][4] = exp
-
-    def get_exp_level(self, user_id, timestamp, user_exp_level):
-        reviews = user_exp_level[user_id]
-        old_exp_level = reviews[0][2]
-        for review in reviews:
-            if review[1] > timestamp: return old_exp_level
-            old_exp_level = review[2]
-        return reviews[len(reviews) - 1][2]
+        return user_exp_levels
