@@ -296,3 +296,11 @@ class ModelFitter:
 
         for i, exp in enumerate(min_path):
             ratings[i][4] = exp
+
+    def get_exp_level(self, user_id, timestamp, user_exp_level):
+        reviews = user_exp_level[user_id]
+        old_exp_level = reviews[0][2]
+        for review in reviews:
+            if review[1] > timestamp: return old_exp_level
+            old_exp_level = review[2]
+        return reviews[len(reviews) - 1][2]
