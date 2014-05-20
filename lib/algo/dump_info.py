@@ -12,10 +12,16 @@ def dump_exp_level(user_reviews, output):
 		reviews = user_reviews[user_id]		
 		output.write(str(user_id) + "\n")
 		old_exp_level = -1
+		count = 0
 		for review in reviews:
+			count += 1
+			start_time = review[3]
 			if review[4] != old_exp_level or old_exp_level == -1:
-				output.write(str(review[3]) + ",") # timestamp
-				output.write(str(review[4]) + "\n") # exp level
+				output.write(str(start_time) + ",") # start_time
+				output.write(str(review[3]) + ",") # end_time
+				output.write(str(review[4]) + ",") # exp level
+				output.write(str(count) + "\n") # num_reivews
+				count = 0
 				old_exp_level = review[4]
 
 def dump_params(params, output):
@@ -25,6 +31,8 @@ def dump_params(params, output):
 	for p in params:
 		output.write(str(p) + "\n")
 
+# map user_id to list of lists
+# each list has (start_time, end_time, exp, num_reviews)
 def read_output(output):
 	user_exp_level = {}
 	params = array([])
@@ -39,13 +47,15 @@ def read_output(output):
 				params = append(params, [num], axis=0)
 			else:
 				if "," in line:
-					timestamp, exp_level = line.split(",")
-					timestamp = int32(timestamp.strip())
+					start_time, end_time, exp_level, num_reviews = line.split(",")
+					start_time = int32(start_time.strip())
+					end_time = int32(end_time.strip())
 					exp_level = int32(exp_level.strip())
-					user_exp_level[user_id] = append(user_exp_level[user_id], [[timestamp, exp_level]], axis=0)
+					num_reviews = int32(num_reviews.strip())
+					user_exp_level[user_id] = append(user_exp_level[user_id], [[start_time, end_time, exp_level,  num_reviews]], axis=0)
 				else:
 					user_id = int32(line.strip())
-					user_exp_level[user_id] = empty((0, 2))
+					user_exp_level[user_id] = empty((0, 4))
 	return user_exp_level, params
 
 # Assume reviews are ordered by time in user_exp_level
@@ -59,7 +69,7 @@ def get_exp_level(user_id, timestamp, user_exp_level):
 
 if __name__ == "__main__":
 	# numpy 2d array
-  user_reviews = {4: array([[1, 2, 3, 100, 3], [5, 6, 7, 150, 4], [10, 20, 30, 300, 5]]), 
+  user_reviews = {4: array([[1, 2, 3, 100, 3], [1, 2, 3, 102, 3], [1, 2, 3, 109, 3], [1, 2, 3, 120, 3],[5, 6, 7, 150, 4], [10, 20, 30, 300, 5], [10, 20, 30, 304, 5], [10, 20, 30, 309, 5]]), 
 		9: array([[11, 21, 31, 100, 1], [5, 6, 7, 150, 1], [19, 21, 21, 300, 1]])}
 	# print user_reviews
   params = array([4, 5, 9])
@@ -69,7 +79,7 @@ if __name__ == "__main__":
   	# New line indicates separation
   	output.write("\n")
   	dump_params(params, output)
-  print 
+  print
   print "Reading the output file"
   user_exp_level, param = read_output(output)
   print user_exp_level
