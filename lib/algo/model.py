@@ -124,11 +124,11 @@ class ModelFitter:
         for user_id in self.user_ratings:
             acc_cost_table = self._build_acc_cost_table(user_id)
             self._update_exp(user_id, acc_cost_table)
-        obj = ModelFitter.objective(self.params, self.user_ratings, self.num_users, self.num_products, self.cores, False)
+        obj = ModelFitter.objective(self.params, self.user_ratings, self.num_users, self.num_products, self.num_reviews, self.reg_param, self.cores, False)
         post_ts = time.time()
         return obj, post_ts - pre_ts
 
-     def validate_model(self):
+    def validate_model(self):
         pre_ts = time.time()
         val_error = float32(0)
         pp = ParamParser(self.num_users, self.num_products, self.params)
@@ -138,40 +138,43 @@ class ModelFitter:
                 timestamp = rating[3]
                 rating[4] = ModelFitter.get_exp_level(user_id, timestamp, user_exp_levels)
         
-        pool = Pool(cores)
+        val_user_ratings_array = concatenate([rating for user, rating in self.val_user_ratings.items()])
+        pool = Pool(self.cores)
         for result in pool.imap_unordered(calculate_error, \
-                                   [(pp, user_rating) for user_rating in user_ratings_array], \
+                                   [(pp, user_rating) for user_rating in val_user_ratings_array], \
                                    chunksize=8192):
             error, e, u, p = result
             val_error += error ** 2
         pool.close()
         pool.join()
+        val_error /= self.val_num_reviews
         post_ts = time.time()
         return val_error, post_ts - pre_ts
 
     def train(self, min_em_iters, lbfgs_iters):
-        print "training model (minimal %d em_iters, %d lbfgs_iters) ...", % (min_em_iters, lbfgs_iters)
+        print "TRAINING MODEL (running at least %d EM iterations, each consists of %d LBFGS iterations) ..." % (min_em_iters, lbfgs_iters)
+        print "[#iter] update theta, [error on training set] (time in seconds) | update E, [error on training set] (time in seconds) | validate, [error on validation set] (time in seconds)"
         validation_errors = []
         iter_count = 0
         while True:
             iter_count += 1
-            print "iter #%d: " % iter_count,
+            print "[%d]: " % iter_count,
             pf, ptime = self.update_params(max_iter=lbfgs_iters)
-            print "update params in %d sec, training set error = %f", % (ptime, pf)
-            print " >> ",
+            print "update theta, %f (%d)" % (pf, ptime),
+            print " | ",
             ef, etime = self.update_exps()
-            print "update exps in %d sec, training set error = %f", % (etime, ef)
-            print " >> ",
+            print "update E, %f (%d)" % (ef, etime),
+            print " | ",
             vf, vtime = self.validate_model()
-            print "validate model in %d sec, validation set error = %f" % (vtime, vf)
+            print "validate, %f (%d)" % (vf, vtime)
             
             validation_errors.append(vf)
-            if iter_count > min_em_iters and validation_errors[-1] > validation_errors[-2]:
-                break
+            if iter_count > min_em_iters and validation_errors[-1] >= validation_errors[-2]:
+               break
 
         print "SUMMARY:"
         print "Training completed in %d iterations" % iter_count
-        print "Validation errors are %s" % validation_errors.join(" ")
+        print "Validation errors are %s" % str(validation_errors)
 
     '''
     Private Helpers
@@ -239,6 +242,7 @@ class ModelFitter:
         print "Reading validation data...",
         self.val_user_ratings = {}
         self.val_num_reviews = int32(0)
+        val_num_del_reviews = int32(0)
 
         with open(self.validation_csv_file, "rb") as validation_csv_file:
             csv_reader = csv.reader(validation_csv_file, delimiter=",")
@@ -248,15 +252,17 @@ class ModelFitter:
                 rating = float32(row[2])
                 timestamp = int32(row[3])
 
-                self.val_num_reviews += 1
                 user_id = self.user_mapping[user_id_str]
-                product_id = self.product_mapping[product_id_str]
+                if product_id_str in self.product_mapping:
+                    self.val_num_reviews += 1
+                    product_id = self.product_mapping[product_id_str]
+                    if user_id not in self.val_user_ratings:
+                        self.val_user_ratings[user_id] = empty((0, 5))
+                    self.val_user_ratings[user_id] = append(self.val_user_ratings[user_id], [[product_id, user_id, rating, timestamp, -1]], axis=0)
+                else:
+                    val_num_del_reviews += 1
 
-                if user_id not in self.val_user_ratings:
-                    self.val_user_ratings[user_id] = empty((0, 5))
-                self.val_user_ratings[user_id] = append(self.val_user_ratings[user_id], [[product_id, user_id, rating, timestamp, -1]], axis=0)
-
-        print "%d reviews" % self.val_num_reviews
+        print "%d reviews (ignored %d reviews as these products are not seen in training set)" % (self.val_num_reviews, val_num_del_reviews)
 
     # training helpers
     def _build_acc_cost_table(self, user_id):
@@ -372,15 +378,17 @@ class ModelFitter:
     # TODO: test
     @staticmethod
     def get_exp_level(user_id, timestamp, user_exp_levels):
-        prev_exp = 0
+        prev_exp = user_exp_levels[user_id][0][2]
         for review in user_exp_levels[user_id]:
             start_timestamp = review[0]
             end_timestamp = review[1]
             curr_exp = review[2]
             if start_timestamp > timestamp:
                 return prev_exp
-            else if end_timestamp > timestamp:
+            elif end_timestamp >= timestamp:
                 return curr_exp
+            else:
+                prev_exp = curr_exp
         return curr_exp
 
     # TODO: test
@@ -401,7 +409,7 @@ class ModelFitter:
                     user_exp_levels[user_id][-1][1] = curr_timestamp
                     user_exp_levels[user_id][-1][3] += 1
                 if curr_exp > prev_exp:
-                    user_exp_levels[user_id] = append(user_exp_levels[uesr_id], [[curr_timestamp, curr_timestamp, curr_exp, 1]], axis=0)
+                    user_exp_levels[user_id] = append(user_exp_levels[user_id], [[curr_timestamp, curr_timestamp, curr_exp, 1]], axis=0)
                 prev_exp = curr_exp
 
         return user_exp_levels

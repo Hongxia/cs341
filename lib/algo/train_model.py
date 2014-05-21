@@ -5,20 +5,15 @@ import sys
 from model import ModelFitter
 
 if len(sys.argv) != 2:
-    print "Usage: python train_model.py csv_file_name_in_data_dir"
+    print "Usage: python train_model.py dataset_dir_in_data_dir"
     exit(1)
 
-CSV_FILE = os.path.join("../../data/", sys.argv[1])
-DEBUG = True
+TRAINING_CSV_FILE = os.path.join("../../data/", sys.argv[1], "training.csv")
+VALIDATION_CSV_FILE = os.path.join("../../data/", sys.argv[1], "validation.csv")
 CORES = 2
-EM_ITERS = 40
-LBFGS_ITERS = 10
-# MIN_EM_ITERS = 5
 LAMBDA = 1
+LBFGS_ITERS = 5
+MIN_EM_ITERS = 5
 
-model = ModelFitter(LAMBDA, CSV_FILE, cores=CORES)
-
-for i in range(EM_ITERS):
-    print "EM_ITERATION_# %d" % (i+1)
-    model.update_params(max_iter=LBFGS_ITERS, DEBUG=DEBUG)
-    model.update_exps(DEBUG=DEBUG)
+model = ModelFitter(LAMBDA, TRAINING_CSV_FILE, VALIDATION_CSV_FILE, cores=CORES)
+model.train(MIN_EM_ITERS, LBFGS_ITERS)
