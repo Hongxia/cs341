@@ -4,10 +4,13 @@ import os
 import sys
 import time
 from model import ModelFitter
-
-if len(sys.argv) != 2:
-    print "Usage: python train_model.py dataset_dir_in_data_dir"
+if len(sys.argv) != 2 and len(sys.argv) != 3:
+    print "Usage: python train_model.py dataset_dir_in_data_dir [description]"
     exit(1)
+
+DESCRIPTION = ""
+if len(sys.argv) == 3:
+    DESCRIPTION = sys.argv[2]
 
 TRAINING_CSV_FILE = os.path.join("../../data/", sys.argv[1], "training.csv")
 VALIDATION_CSV_FILE = os.path.join("../../data/", sys.argv[1], "validation.csv")
@@ -20,4 +23,4 @@ LBFGS_ITERS = 5
 MIN_EM_ITERS = 2
 
 model = ModelFitter(TRAINING_CSV_FILE, cores=CORES)
-model.train(VALIDATION_CSV_FILE, OUTPUT_FILE, LAMBDA, MIN_EM_ITERS, LBFGS_ITERS)
+model.train(VALIDATION_CSV_FILE, OUTPUT_FILE, LAMBDA, MIN_EM_ITERS, LBFGS_ITERS, DESCRIPTION)
