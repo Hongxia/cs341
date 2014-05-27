@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 from model import ModelFitter
 
 if len(sys.argv) != 2:
@@ -10,10 +11,13 @@ if len(sys.argv) != 2:
 
 TRAINING_CSV_FILE = os.path.join("../../data/", sys.argv[1], "training.csv")
 VALIDATION_CSV_FILE = os.path.join("../../data/", sys.argv[1], "validation.csv")
+OUTPUT_DIR = os.path.join("../../data/", sys.argv[1], "output/")
+os.system("mkdir -p " + OUTPUT_DIR)
+OUTPUT_FILE = os.path.join(OUTPUT_DIR, str(int(time.time())))
 CORES = 2
 LAMBDA = 1
 LBFGS_ITERS = 5
-MIN_EM_ITERS = 5
+MIN_EM_ITERS = 2
 
-model = ModelFitter(LAMBDA, TRAINING_CSV_FILE, VALIDATION_CSV_FILE, cores=CORES)
-model.train(MIN_EM_ITERS, LBFGS_ITERS)
+model = ModelFitter(TRAINING_CSV_FILE, cores=CORES)
+model.train(VALIDATION_CSV_FILE, OUTPUT_FILE, LAMBDA, MIN_EM_ITERS, LBFGS_ITERS)

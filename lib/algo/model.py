@@ -1,6 +1,8 @@
 import time
 import csv
+import json
 import scipy
+import os
 from numpy import *
 import operator
 from scipy import optimize
@@ -91,40 +93,37 @@ class ParamParser:
 
 class ModelFitter:
     
-    def __init__(self, reg_param, training_csv_file, validation_csv_file, cores=1):
-        self.training_csv_file = training_csv_file
-        self.validation_csv_file = validation_csv_file
+    def __init__(self, training_csv_file, cores=1):
         self.cores = cores
-        self.reg_param = reg_param
+        self.training_csv_file = training_csv_file
         self._read_training_data()
-        self._read_validation_data()
-        
+
     '''
     Public Interface
     '''           
-    def update_params(self, max_iter=-1):
+    def update_params(self, reg_param, max_iter=-1):
         pre_ts = time.time()
         if max_iter > 0:
             p, f, d = scipy.optimize.fmin_l_bfgs_b(ModelFitter.objective, x0=self.params, \
                                                 args=(self.user_ratings, self.num_users, self.num_products, self.num_reviews, \
-                                                      self.reg_param, self.cores, True), \
+                                                      reg_param, self.cores, True), \
                                                 approx_grad=False, maxiter=max_iter, disp=0)
         else:
             p, f, d = scipy.optimize.fmin_l_bfgs_b(ModelFitter.objective, x0=self.params, \
                                                 args=(self.user_ratings, self.num_users, self.num_products, self.num_reviews, \
-                                                      self.reg_param, self.cores, True), \
+                                                      reg_param, self.cores, True), \
                                                 approx_grad=False, disp=0)
         self.params = array(p)
         post_ts = time.time()
 
         return f, post_ts - pre_ts
 
-    def update_exps(self):
+    def update_exps(self, reg_param):
         pre_ts = time.time()
         for user_id in self.user_ratings:
             acc_cost_table = self._build_acc_cost_table(user_id)
             self._update_exp(user_id, acc_cost_table)
-        obj = ModelFitter.objective(self.params, self.user_ratings, self.num_users, self.num_products, self.num_reviews, self.reg_param, self.cores, False)
+        obj = ModelFitter.objective(self.params, self.user_ratings, self.num_users, self.num_products, self.num_reviews, reg_param, self.cores, False)
         post_ts = time.time()
         return obj, post_ts - pre_ts
 
@@ -151,18 +150,41 @@ class ModelFitter:
         post_ts = time.time()
         return val_error, post_ts - pre_ts
 
-    def train(self, min_em_iters, lbfgs_iters):
+    def test_model(self, params, user_exp_levels):
+        pre_ts = time.time()
+        test_error = float32(0)
+        pp = ParamParser(self.num_users, self.num_products, params)
+        for user_id in self.test_user_ratings:
+            for rating in self.test_user_ratings[user_id]:
+                timestamp = rating[3]
+                rating[4] = ModelFitter.get_exp_level(user_id, timestamp, user_exp_levels)
+
+        test_user_ratings_array = concatenate([rating for user, rating in self.test_user_ratings.items()])
+        pool = Pool(self.cores)
+        for result in pool.imap_unordered(calculate_error, \
+                                   [(pp, user_rating) for user_rating in test_user_ratings_array], \
+                                   chunksize=8192):
+            error, e, u, p = result
+            test_error += error ** 2
+        pool.close()
+        pool.join()
+        test_error /= self.test_num_reviews
+        post_ts = time.time()
+        return test_error, post_ts - pre_ts
+
+    def train(self, validation_file, output_file, reg_param, min_em_iters, lbfgs_iters, description=""):
+        self._read_validation_data(validation_file)
+
         print "TRAINING MODEL (running at least %d EM iterations, each consists of %d LBFGS iterations) ..." % (min_em_iters, lbfgs_iters)
-        print "[#iter] update theta, [error on training set] (time in seconds) | update E, [error on training set] (time in seconds) | validate, [error on validation set] (time in seconds)"
         validation_errors = []
         iter_count = 0
         while True:
             iter_count += 1
             print "[%d]: " % iter_count,
-            pf, ptime = self.update_params(max_iter=lbfgs_iters)
+            pf, ptime = self.update_params(reg_param, max_iter=lbfgs_iters)
             print "update theta, %f (%d)" % (pf, ptime),
             print " | ",
-            ef, etime = self.update_exps()
+            ef, etime = self.update_exps(reg_param)
             print "update E, %f (%d)" % (ef, etime),
             print " | ",
             vf, vtime = self.validate_model()
@@ -172,9 +194,28 @@ class ModelFitter:
             if iter_count > min_em_iters and validation_errors[-1] >= validation_errors[-2]:
                break
 
-        print "SUMMARY:"
-        print "Training completed in %d iterations" % iter_count
-        print "Validation errors are %s" % str(validation_errors)
+        print "TRAINING COMPLETED in %d iterations... validation errors: %s" % (iter_count, str(validation_errors))
+
+        print "WRITING PARAMS AND EXP_LEVELS TO %s..." % os.path.basename(output_file)
+        output_json = {}
+        output_json["description"] = description
+        output_json["params"] = self.params.tolist()
+        user_exp_levels = ModelFitter.summarize_user_exp_levels(self.user_ratings)
+        json_user_exp_levels = {}
+        for user_id in user_exp_levels:
+            json_user_exp_levels[str(user_id)] = user_exp_levels[user_id].tolist()
+
+        output_json["user_exp_levels"] = json_user_exp_levels
+        with open(output_file, "wb") as output:
+            json.dump(output_json, output, sort_keys=True, indent=4)
+
+    def test(self, testing_file, model_file):
+        self._read_testing_data(testing_file)
+        print "PARSING PARAMS AND USER EXPERIENCE LEVELS..."
+        params, user_exp_levels = self._read_model_file(model_file)
+        print "TESTING MODEL... ",
+        tf, ttime = self.test_model(params, user_exp_levels)
+        print "%f (%d)" % (tf, ttime)
 
     '''
     Private Helpers
@@ -238,13 +279,13 @@ class ModelFitter:
         self.params = append(alphas/alpha_counts, zeros(sum(ParamParser.params_dimensions(self.num_users, self.num_products)) - exp_level, dtype=float32))
         print "%d reviews from %d users on %d products" % (self.num_reviews, self.num_users, self.num_products)
 
-    def _read_validation_data(self):
+    def _read_validation_data(self, validation_file):
         print "Reading validation data...",
         self.val_user_ratings = {}
         self.val_num_reviews = int32(0)
         val_num_del_reviews = int32(0)
 
-        with open(self.validation_csv_file, "rb") as validation_csv_file:
+        with open(validation_file, "rb") as validation_csv_file:
             csv_reader = csv.reader(validation_csv_file, delimiter=",")
             for row in csv_reader:
                 product_id_str = row[0]
@@ -262,7 +303,45 @@ class ModelFitter:
                 else:
                     val_num_del_reviews += 1
 
-        print "%d reviews (ignored %d reviews as these products are not seen in training set)" % (self.val_num_reviews, val_num_del_reviews)
+        print "processed %d reviews (ignored %d reviews)" % (self.val_num_reviews, val_num_del_reviews)
+
+    def _read_testing_data(self, testing_file):
+        print "Reading testing data...",
+        self.test_user_ratings = {}
+        self.test_num_reviews = int32(0)
+        test_num_del_reviews = int32(0)
+
+        with open(testing_file, "rb") as testing_csv_file:
+            csv_reader = csv.reader(testing_csv_file, delimiter=",")
+            for row in csv_reader:
+                product_id_str = row[0]
+                user_id_str = row[1]
+                rating = float32(row[2])
+                timestamp = int32(row[3])
+
+                user_id = self.user_mapping[user_id_str]
+                if product_id_str in self.product_mapping:
+                    self.test_num_reviews += 1
+                    product_id = self.product_mapping[product_id_str]
+                    if user_id not in self.test_user_ratings:
+                        self.test_user_ratings[user_id] = empty((0, 5))
+                    self.test_user_ratings[user_id] = append(self.test_user_ratings[user_id], [[product_id, user_id, rating, timestamp, -1]], axis=0)
+                else:
+                    test_num_del_reviews += 1
+
+        print "processed %d reviews (ignored %d reviews)" % (self.test_num_reviews, test_num_del_reviews)
+
+    def _read_model_file(self, model_file):
+        with open(model_file, "rb") as model_f:
+            model_json = json.load(model_f)
+        
+        params = array(model_json["params"])
+        user_exp_levels = {}
+        json_user_exp_levels = model_json["user_exp_levels"]
+        for user_id_str in json_user_exp_levels:
+            user_exp_levels[int(user_id_str)] = array(json_user_exp_levels[user_id_str])
+        
+        return params, user_exp_levels
 
     # training helpers
     def _build_acc_cost_table(self, user_id):
@@ -375,7 +454,6 @@ class ModelFitter:
             return obj
 
     # validation helpers
-    # TODO: test
     @staticmethod
     def get_exp_level(user_id, timestamp, user_exp_levels):
         prev_exp = user_exp_levels[user_id][0][2]
@@ -391,7 +469,6 @@ class ModelFitter:
                 prev_exp = curr_exp
         return curr_exp
 
-    # TODO: test
     @staticmethod
     def summarize_user_exp_levels(user_ratings):
         user_exp_levels = {}
