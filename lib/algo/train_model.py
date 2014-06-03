@@ -19,8 +19,8 @@ os.system("mkdir -p " + OUTPUT_DIR)
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, str(int(time.time())))
 CORES = 2
 LAMBDA = 1
-LBFGS_ITERS = 5
-MIN_EM_ITERS = 2
+LBFGS_ITERS = 10
+MIN_EM_ITERS = 10
 
 model = ModelFitter(TRAINING_CSV_FILE, cores=CORES)
 model.train(VALIDATION_CSV_FILE, OUTPUT_FILE, LAMBDA, MIN_EM_ITERS, LBFGS_ITERS, DESCRIPTION)

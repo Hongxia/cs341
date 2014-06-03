@@ -276,7 +276,7 @@ class ModelFitter:
                 alpha_counts[exp_level - 1] += 1
 
         # init params
-        self.params = append(alphas/alpha_counts, zeros(sum(ParamParser.params_dimensions(self.num_users, self.num_products)) - exp_level, dtype=float32))
+        self.params = append(alphas/alpha_counts, random.rand(sum(ParamParser.params_dimensions(self.num_users, self.num_products)) - exp_level))
         print "%d reviews from %d users on %d products" % (self.num_reviews, self.num_users, self.num_products)
 
     def _read_validation_data(self, validation_file):
@@ -401,6 +401,7 @@ class ModelFitter:
                                    chunksize=8192):
             error, e, u, p = result
             if calculate_gradient:
+                gp.incr_alpha(e, 2 * error)
                 gp.incr_betau(e, u, 2 * error)
                 gp.incr_betai(e, p, 2 * error)
                 for k in range(k_level):
