@@ -93,8 +93,9 @@ class ParamParser:
 
 class ModelFitter:
     
-    def __init__(self, training_csv_file, cores=1):
+    def __init__(self, training_csv_file, cores, chunksize):
         self.cores = cores
+        self.chunksize = chunksize
         self.training_csv_file = training_csv_file
         self._read_training_data()
 
@@ -106,12 +107,12 @@ class ModelFitter:
         if max_iter > 0:
             p, f, d = scipy.optimize.fmin_l_bfgs_b(ModelFitter.objective, x0=self.params, \
                                                 args=(self.user_ratings, self.num_users, self.num_products, self.num_reviews, \
-                                                      reg_param, self.cores, True), \
+                                                      reg_param, self.cores, self.chunksize, True), \
                                                 approx_grad=False, maxiter=max_iter, disp=0)
         else:
             p, f, d = scipy.optimize.fmin_l_bfgs_b(ModelFitter.objective, x0=self.params, \
                                                 args=(self.user_ratings, self.num_users, self.num_products, self.num_reviews, \
-                                                      reg_param, self.cores, True), \
+                                                      reg_param, self.cores, self.chunksize, True), \
                                                 approx_grad=False, disp=0)
         self.params = array(p)
         post_ts = time.time()
@@ -123,7 +124,7 @@ class ModelFitter:
         for user_id in self.user_ratings:
             acc_cost_table = self._build_acc_cost_table(user_id)
             self._update_exp(user_id, acc_cost_table)
-        obj = ModelFitter.objective(self.params, self.user_ratings, self.num_users, self.num_products, self.num_reviews, reg_param, self.cores, False)
+        obj = ModelFitter.objective(self.params, self.user_ratings, self.num_users, self.num_products, self.num_reviews, reg_param, self.cores, self.chunksize, False)
         post_ts = time.time()
         return obj, post_ts - pre_ts
 
@@ -141,7 +142,7 @@ class ModelFitter:
         pool = Pool(self.cores)
         for result in pool.imap_unordered(calculate_error, \
                                    [(pp, user_rating) for user_rating in val_user_ratings_array], \
-                                   chunksize=8192):
+                                   chunksize=self.chunksize):
             error, e, u, p = result
             val_error += error ** 2
         pool.close()
@@ -163,7 +164,7 @@ class ModelFitter:
         pool = Pool(self.cores)
         for result in pool.imap_unordered(calculate_error, \
                                    [(pp, user_rating) for user_rating in test_user_ratings_array], \
-                                   chunksize=8192):
+                                   chunksize=self.chunksize):
             error, e, u, p = result
             test_error += error ** 2
         pool.close()
@@ -389,7 +390,7 @@ class ModelFitter:
 
     @staticmethod
     def objective(params, *args):
-        user_ratings, num_users, num_products, num_reviews, reg_param, cores, calculate_gradient = args
+        user_ratings, num_users, num_products, num_reviews, reg_param, cores, chunksize, calculate_gradient = args
         user_ratings_array = concatenate([rating for user, rating in user_ratings.items()])
         pp = ParamParser(num_users, num_products, params)
 
@@ -404,7 +405,7 @@ class ModelFitter:
         pool = Pool(cores)
         for result in pool.imap_unordered(calculate_error, \
                                    [(pp, user_rating) for user_rating in user_ratings_array], \
-                                   chunksize=8192):
+                                   chunksize=chunksize):
             error, e, u, p = result
             if calculate_gradient:
                 gp.incr_alpha(e, 2 * error)
