@@ -191,21 +191,27 @@ class ModelFitter:
             print "validate, %f (%d)" % (vf, vtime)
             
             validation_errors.append(vf)
+            if len(validation_errors) == 1 or vf < min_vf:
+                min_vf = vf
+                min_params = copy(self.params)
+                min_user_ratings = copy(self.user_ratings)
             if iter_count > min_em_iters and validation_errors[-1] >= validation_errors[-2]:
                break
 
         print "TRAINING COMPLETED in %d iterations... validation errors: %s" % (iter_count, str(validation_errors))
 
-        print "WRITING PARAMS AND EXP_LEVELS TO %s..." % os.path.basename(output_file)
+        print "WRITING PARAMS AND EXP_LEVELS (validation error = %f) TO %s..." % (min_vf, os.path.basename(output_file))
         output_json = {}
         output_json["description"] = description
-        output_json["params"] = self.params.tolist()
-        user_exp_levels = ModelFitter.summarize_user_exp_levels(self.user_ratings)
+        output_json["params"] = min_params.tolist()
+        user_exp_levels = ModelFitter.summarize_user_exp_levels(min_user_ratings.tolist())
         json_user_exp_levels = {}
         for user_id in user_exp_levels:
             json_user_exp_levels[str(user_id)] = user_exp_levels[user_id].tolist()
 
         output_json["user_exp_levels"] = json_user_exp_levels
+        output_json["user_mapping"] = self.user_mapping
+        output_json["product_mapping"] = self.product_mapping
         with open(output_file, "wb") as output:
             json.dump(output_json, output, sort_keys=True, indent=4)
 
@@ -228,9 +234,9 @@ class ModelFitter:
         self.user_mapping = {}
         self.product_mapping = {}
 
-        self.num_users = int32(0)
-        self.num_products = int32(0)
-        self.num_reviews = int32(0)
+        self.num_users = 0
+        self.num_products = 0
+        self.num_reviews = 0
 
         with open(self.training_csv_file, "rb") as training_csv_file:
             csv_reader = csv.reader(training_csv_file, delimiter=",")
