@@ -5,8 +5,12 @@ import scipy
 import os
 from numpy import *
 import operator
+import ctypes
 from scipy import optimize
-from multiprocessing import Pool
+import multiprocessing
+from multiprocessing import Process, Queue
+from parser import ParamParser
+from worker import worker_calculate_error
 
 exp_level = 5
 k_level = 5
@@ -21,81 +25,10 @@ def calculate_error(args):
     rec = pp.alpha(e) + pp.betau(e, u) + pp.betai(e, p) + dot(pp.gammau(e, u), pp.gammai(e, p))
     return rec - rating, e, u, p
 
-class ParamParser:
-
-    @staticmethod
-    def params_dimensions(num_users, num_products):
-        num_alpha = exp_level
-        num_betau = exp_level * num_users
-        num_betai = exp_level * num_products
-        num_gammau = exp_level * num_users * k_level
-        num_gammai = exp_level * num_products * k_level
-        return num_alpha, num_betau, num_betai, num_gammau, num_gammai
-    
-    def __init__(self, num_users, num_products, params):
-        self.params = params
-        self.num_users = num_users
-        self.num_products = num_products
-
-        self.num_alpha, self.num_betau, \
-        self.num_betai, self.num_gammau, \
-        self.num_gammai = ParamParser.params_dimensions(num_users, num_products)
-
-    # getters
-    def alpha(self, e):
-        return self.params[e]
-
-    def betau(self, e, u):
-        index = exp_level * u + e
-        return self.params[self.num_alpha + self.num_betai + index]
-
-    def betai(self, e, i):
-        index = exp_level * i + e
-        return self.params[self.num_alpha + index]
-
-    def gammau(self, e, u):
-        index = (k_level + exp_level) * u + k_level * e
-        index += self.num_alpha + self.num_betai + self.num_betau + self.num_gammai
-        return self.params[index:index+k_level]
-
-    def gammai(self, e, i):
-        index = (k_level + exp_level) * i + k_level * e
-        index += self.num_alpha + self.num_betai + self.num_betau
-        return self.params[index:index+k_level]
-
-    def gammauk(self, e, u, k):
-        index = (k_level + exp_level) * u + k_level * e + k
-        return self.params[self.num_alpha + self.num_betai + self.num_betau + self.num_gammai + index]
-
-    def gammaik(self, e, i, k):
-        index = (k_level + exp_level) * i + k_level * e + k
-        return self.params[self.num_alpha + self.num_betai + self.num_betau + index]
-
-    # incrementors
-    def incr_alpha(self, e, value):
-        self.params[e] += value
-
-    def incr_betau(self, e, u, value):
-        index = exp_level * u + e
-        self.params[self.num_alpha + self.num_betai + index] += value
-
-    def incr_betai(self, e, i, value):
-        index = exp_level * i + e
-        self.params[self.num_alpha + index] += value
-
-    def incr_gammau(self, e, u, k, value):
-        index = (k_level + exp_level) * u + k_level * e + k
-        self.params[self.num_alpha + self.num_betai + self.num_betau + self.num_gammai + index] += value
-
-    def incr_gammai(self, e, i, k, value):
-        index = (k_level + exp_level) * i + k_level * e + k
-        self.params[self.num_alpha + self.num_betai + self.num_betau + index] += value
-
 class ModelFitter:
     
-    def __init__(self, training_csv_file, cores, chunksize):
+    def __init__(self, training_csv_file, cores):
         self.cores = cores
-        self.chunksize = chunksize
         self.training_csv_file = training_csv_file
         self._read_training_data()
 
@@ -107,12 +40,12 @@ class ModelFitter:
         if max_iter > 0:
             p, f, d = scipy.optimize.fmin_l_bfgs_b(ModelFitter.objective, x0=self.params, \
                                                 args=(self.user_ratings, self.num_users, self.num_products, self.num_reviews, \
-                                                      reg_param, self.cores, self.chunksize, True), \
+                                                      reg_param, self.cores, True), \
                                                 approx_grad=False, maxiter=max_iter, disp=0)
         else:
             p, f, d = scipy.optimize.fmin_l_bfgs_b(ModelFitter.objective, x0=self.params, \
                                                 args=(self.user_ratings, self.num_users, self.num_products, self.num_reviews, \
-                                                      reg_param, self.cores, self.chunksize, True), \
+                                                      reg_param, self.cores, True), \
                                                 approx_grad=False, disp=0)
         self.params = array(p)
         post_ts = time.time()
@@ -124,7 +57,7 @@ class ModelFitter:
         for user_id in self.user_ratings:
             acc_cost_table = self._build_acc_cost_table(user_id)
             self._update_exp(user_id, acc_cost_table)
-        obj = ModelFitter.objective(self.params, self.user_ratings, self.num_users, self.num_products, self.num_reviews, reg_param, self.cores, self.chunksize, False)
+        obj = ModelFitter.objective(self.params, self.user_ratings, self.num_users, self.num_products, self.num_reviews, reg_param, self.cores, False)
         post_ts = time.time()
         return obj, post_ts - pre_ts
 
@@ -139,14 +72,17 @@ class ModelFitter:
                 rating[4] = ModelFitter.get_exp_level(user_id, timestamp, user_exp_levels)
         
         val_user_ratings_array = concatenate([rating for user, rating in self.val_user_ratings.items()])
-        pool = Pool(self.cores)
-        for result in pool.imap_unordered(calculate_error, \
-                                   [(pp, user_rating) for user_rating in val_user_ratings_array], \
-                                   chunksize=self.chunksize):
-            error, e, u, p = result
-            val_error += error ** 2
-        pool.close()
-        pool.join()
+        worker_batch_size = len(val_user_ratings_array)/int(self.cores)
+        queue = Queue()
+        workers = [Process(name="worker %d" % core, target=worker_calculate_error, args=(queue, self.params, val_user_ratings_array[core*worker_batch_size:(core+1)*worker_batch_size], self.num_users, self.num_products, False, None, )) for core in range(self.cores-1)]
+        workers.append(Process(name="worker %d" % (self.cores-1), target=worker_calculate_error, args=(queue, self.params, val_user_ratings_array[(self.cores-1)*worker_batch_size:], self.num_users, self.num_products, False, None, )))
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join()
+        while not queue.empty():
+            val_error += queue.get()
+
         val_error /= self.val_num_reviews
         post_ts = time.time()
         return val_error, post_ts - pre_ts
@@ -161,14 +97,17 @@ class ModelFitter:
                 rating[4] = ModelFitter.get_exp_level(user_id, timestamp, user_exp_levels)
 
         test_user_ratings_array = concatenate([rating for user, rating in self.test_user_ratings.items()])
-        pool = Pool(self.cores)
-        for result in pool.imap_unordered(calculate_error, \
-                                   [(pp, user_rating) for user_rating in test_user_ratings_array], \
-                                   chunksize=self.chunksize):
-            error, e, u, p = result
-            test_error += error ** 2
-        pool.close()
-        pool.join()
+        worker_batch_size = len(test_user_ratings_array)/int(self.cores)
+        queue = Queue()
+        workers = [Process(name="worker %d" % core, target=worker_calculate_error, args=(queue, self.params, test_user_ratings_array[core*worker_batch_size:(core+1)*worker_batch_size], self.num_users, self.num_products, False, None, )) for core in range(self.cores-1)]
+        workers.append(Process(name="worker %d" % (self.cores-1), target=worker_calculate_error, args=(queue, self.params, test_user_ratings_array[(self.cores-1)*worker_batch_size:], self.num_users, self.num_products, False, None, )))
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join()
+        while not queue.empty():
+            test_error += queue.get()
+
         test_error /= self.test_num_reviews
         post_ts = time.time()
         return test_error, post_ts - pre_ts
@@ -284,6 +223,7 @@ class ModelFitter:
 
         # init params
         self.params = append(alphas/alpha_counts, random.rand(sum(ParamParser.params_dimensions(self.num_users, self.num_products)) - exp_level))
+        print len(self.params)
         print "%d reviews from %d users on %d products" % (self.num_reviews, self.num_users, self.num_products)
 
     def _read_validation_data(self, validation_file):
@@ -388,37 +328,72 @@ class ModelFitter:
         for i, exp in enumerate(min_path):
             ratings[i][4] = exp
 
+    # @staticmethod
+    # def calculate_error(queue, params, user_ratings, num_users, num_products, calculate_gradient):
+    #     name = multiprocessing.current_process().name
+    #     print "%s calculate error %d" % (name, len(user_ratings))
+        
+    #     pp = ParamParser(num_users, num_products, params)
+    #     if calculate_gradient:
+    #         gradients = zeros(sum(ParamParser.params_dimensions(num_users, num_products)))
+    #         gp = ParamParser(num_users, num_products, gradients)
+    #     obj = 0
+    #     for i in range(len(user_ratings)):
+    #         user_rating = user_ratings[i]
+    #         e = user_rating[4]
+    #         u = user_rating[1]
+    #         p = user_rating[0]
+    #         rating = user_rating[2]
+    #         rec = pp.alpha(e) + pp.betau(e, u) + pp.betai(e, p) + dot(pp.gammau(e, u), pp.gammai(e, p))
+    #         error = (rec - rating)
+    #         obj += error ** 2
+    #         if calculate_gradient:
+    #             gp.incr_alpha(e, 2 * error)
+    #             gp.incr_betau(e, u, 2 * error)
+    #             gp.incr_betai(e, p, 2 * error)
+    #             for k in range(k_level):
+    #                 gp.incr_gammau(e, u, k, 2 * error * pp.gammaik(e, p, k))
+    #                 gp.incr_gammai(e, p, k, 2 * error * pp.gammauk(e, u, k))
+    #     if calculate_gradient:
+    #         queue.put((obj, gp))
+    #         print "%s finish" % name
+    #     else:
+    #         queue.put(obj)
+    #         print "%s finish" % name
+
+    #     print multiprocessing.current_process()
+
     @staticmethod
     def objective(params, *args):
-        user_ratings, num_users, num_products, num_reviews, reg_param, cores, chunksize, calculate_gradient = args
-        user_ratings_array = concatenate([rating for user, rating in user_ratings.items()])
-        pp = ParamParser(num_users, num_products, params)
+        user_ratings, num_users, num_products, num_reviews, reg_param, cores, calculate_gradient = args
+        user_ratings_array = array(concatenate([rating for user, rating in user_ratings.items()]))
 
         # objective
         obj = float32(0)
         reg = float32(0)
-        # gradient
-        if calculate_gradient:
-            gradients = zeros(sum(ParamParser.params_dimensions(num_users, num_products)))
-            gp = ParamParser(num_users, num_products, gradients)
 
-        pool = Pool(cores)
-        for result in pool.imap_unordered(calculate_error, \
-                                   [(pp, user_rating) for user_rating in user_ratings_array], \
-                                   chunksize=chunksize):
-            error, e, u, p = result
-            if calculate_gradient:
-                gp.incr_alpha(e, 2 * error)
-                gp.incr_betau(e, u, 2 * error)
-                gp.incr_betai(e, p, 2 * error)
-                for k in range(k_level):
-                    gp.incr_gammau(e, u, k, 2 * error * pp.gammaik(e, p, k))
-                    gp.incr_gammai(e, p, k, 2 * error * pp.gammauk(e, u, k))
-            obj += error ** 2
-        pool.close()
-        pool.join()
+        worker_batch_size = len(user_ratings_array)/int(cores)
+        queue = Queue()
+        if calculate_gradient:
+            shared_base = multiprocessing.Array(ctypes.c_double, sum(ParamParser.params_dimensions(num_users, num_products)))
+            shared_gradients = ctypeslib.as_array(shared_base.get_obj())
+        else:
+            shared_gradients = None
+        workers = [Process(name="worker %d" % core, target=worker_calculate_error, args=(queue, params, user_ratings_array[core*worker_batch_size:(core+1)*worker_batch_size], num_users, num_products, calculate_gradient, shared_gradients, )) for core in range(cores-1)]
+        workers.append(Process(name="worker %d" % (cores-1), target=worker_calculate_error, args=(queue, params, user_ratings_array[(cores-1)*worker_batch_size:], num_users, num_products, calculate_gradient, shared_gradients, )))
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join()
+        
+        if calculate_gradient:
+            gradients = copy(shared_gradients)
+            gp = ParamParser(num_users, num_products, gradients)
+        while not queue.empty():
+            obj += queue.get()
  
         obj /= num_reviews
+        pp = ParamParser(num_users, num_products, params)
         num_alpha_betas = pp.num_alpha + pp.num_betai + pp.num_betau
         for e in range(exp_level-1):
             reg += linalg.norm(params[e:num_alpha_betas:exp_level] - params[e+1:num_alpha_betas:exp_level], ord=None)**2
