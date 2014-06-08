@@ -19,15 +19,15 @@ git clone https://github.com/Hongxia/cs341.git
 # pull data
 mkdir /home/ubuntu/cs341/data
 cd /home/ubuntu/cs341/data 
-get -r s3://cs341-amazon/hive-input/Arts_rand
-get -r s3://cs341-amazon/hive-input/Arts_temp
-get -r s3://cs341-amazon/hive-input/Books_rand
-get -r s3://cs341-amazon/hive-input/Books_temp
-get -r s3://cs341-amazon/hive-input/Gourmet_Foods_rand
-get -r s3://cs341-amazon/hive-input/Gourmet_Foods_temp
-get -r s3://cs341-amazon/hive-input/Movies_rand
-get -r s3://cs341-amazon/hive-input/Movies_temp
-get -r s3://cs341-amazon/hive-input/Music_rand
-get -r s3://cs341-amazon/hive-input/Music_temp
-get -r s3://cs341-amazon/hive-input/Video_Games_rand
-get -r s3://cs341-amazon/hive-input/Video_Games_temp
+s3cmd get -r s3://cs341-amazon/hive-input/Arts_rand
+s3cmd get -r s3://cs341-amazon/hive-input/Arts_temp
+s3cmd get -r s3://cs341-amazon/hive-input/Books_rand
+s3cmd get -r s3://cs341-amazon/hive-input/Books_temp
+s3cmd get -r s3://cs341-amazon/hive-input/Gourmet_Foods_rand
+s3cmd get -r s3://cs341-amazon/hive-input/Gourmet_Foods_temp
+s3cmd get -r s3://cs341-amazon/hive-input/Movies_rand
+s3cmd get -r s3://cs341-amazon/hive-input/Movies_temp
+s3cmd get -r s3://cs341-amazon/hive-input/Music_rand
+s3cmd get -r s3://cs341-amazon/hive-input/Music_temp
+s3cmd get -r s3://cs341-amazon/hive-input/Video_Games_rand
+s3cmd get -r s3://cs341-amazon/hive-input/Video_Games_temp
