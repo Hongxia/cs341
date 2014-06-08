@@ -9,7 +9,6 @@ sudo pip install scipy
 # setup s3cmd
 sudo apt-get install s3cmd
 echo "ACCESS KEY: AKIAIGQCJ2QMLH6GQJGQ"
-echo "SECRET KEY: 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"
 s3cmd --configure
 
 # setup git repo
