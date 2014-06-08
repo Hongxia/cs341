@@ -1,5 +1,8 @@
 #!/usr/bin/python
 
+import sys
+import json
+
 if len(sys.argv) != 3:
     print "Usage: python find_common_users.py file_1 file_2"
     exit(1)
