@@ -11,6 +11,11 @@ sudo apt-get install s3cmd
 echo "ACCESS KEY: AKIAIGQCJ2QMLH6GQJGQ"
 s3cmd --configure
 
+# install java
+sudo apt-get install default-jre
+sudo apt-get install default-jdk
+
+
 # setup git repo
 sudo apt-get install git-core
 git clone https://github.com/Hongxia/cs341.git
